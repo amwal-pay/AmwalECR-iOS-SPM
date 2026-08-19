@@ -252,4 +252,13 @@ The suite is not incidental to the platform story: `EcrDecimalTests`,
 `EcrMessageTests` and `EcrResponseReaderTests` assert this SDK against the Kotlin
 SDK's own test payloads and rounding boundaries. That is what keeps "identical on
 both platforms" a checkable claim.
+
+### Continuous integration
+
+[`codemagic.yaml`](codemagic.yaml) runs on Codemagic. Every push and pull
+request runs `swift test` and compiles the package for an iOS device and the
+simulator. A `vX.Y.Z` tag runs the same, checks the tag against the top
+`CHANGELOG.md` entry, and then resolves that exact version from GitHub into a
+throwaway consumer package — the tag *is* the SwiftPM release, so that is the
+release being read back. Nothing is uploaded and no credentials are needed.
 # AmwalECR-iOS-SPM

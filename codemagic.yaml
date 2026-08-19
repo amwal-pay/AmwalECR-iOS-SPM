@@ -1,0 +1,142 @@
+# Codemagic CI for the Swift Package Manager distribution of the Amwal ECR SDK.
+#
+# Two workflows:
+#
+#   spm-verify   every push and pull request — builds and tests the package on
+#                macOS, then compiles it for an iOS device and the simulator,
+#                so a change that only breaks under the iOS SDK is caught here
+#                and not by the first integrator.
+#
+#   spm-release  a `vX.Y.Z` tag — the tag *is* the release for SwiftPM (see
+#                doc/release-policy.md in amwal-ecr-flutter), so there is
+#                nothing to upload. This workflow proves the tag is a release
+#                worth the name: the version matches the CHANGELOG, the suite
+#                passes on the tagged commit, and a fresh consumer package can
+#                resolve exactly that version from GitHub — which is the
+#                "read it back from the registry" step the release policy asks
+#                for. A tag that fails here should be superseded, never moved.
+#
+# No credentials are needed: SwiftPM publishes by tag, and the repository is
+# public. The same sources are published to CocoaPods from AmwalECR-iOS-CocoaPods,
+# which has its own codemagic.yaml and does need a trunk token.
+definitions:
+  env: &env
+    xcode: latest
+  scripts:
+    - &toolchain
+      name: Toolchain
+      script: |
+        xcodebuild -version
+        swift --version
+    - &swift_test
+      name: Build and test on macOS
+      script: |
+        # The wire-format, rounding and signing suites run on a plain Mac:
+        # nothing in the SDK is iOS-only.
+        swift test
+    - &build_ios
+      name: Build for iOS device and simulator
+      script: |
+        set -euo pipefail
+        # xcodebuild reads the package manifest directly and exposes one scheme
+        # per product, so no project file is needed.
+        xcodebuild build -quiet -scheme AmwalECR \
+          -destination 'generic/platform=iOS' \
+          CODE_SIGNING_ALLOWED=NO
+        xcodebuild build -quiet -scheme AmwalECR \
+          -destination 'generic/platform=iOS Simulator' \
+          CODE_SIGNING_ALLOWED=NO
+        echo "AmwalECR builds for iOS device and simulator"
+  email: &email
+    email:
+      recipients:
+        - amr.elskaan@amwal-pay.com
+      notify:
+        success: true
+        failure: true
+
+workflows:
+  spm-verify:
+    name: AmwalECR SPM — verify
+    instance_type: mac_mini_m2
+    max_build_duration: 30
+    environment: *env
+    triggering:
+      events:
+        - push
+        - pull_request
+      branch_patterns:
+        - pattern: '*'
+          include: true
+          source: true
+      cancel_previous_builds: true
+    scripts:
+      - *toolchain
+      - *swift_test
+      - *build_ios
+    publishing: *email
+
+  spm-release:
+    name: AmwalECR SPM — release (vX.Y.Z tag)
+    instance_type: mac_mini_m2
+    max_build_duration: 30
+    environment: *env
+    triggering:
+      events:
+        - tag
+      tag_patterns:
+        - pattern: 'v*'
+          include: true
+    scripts:
+      - name: The tag names the version in the CHANGELOG
+        script: |
+          set -euo pipefail
+          tag="${CM_TAG:-}"
+          [[ -n "$tag" ]] || { echo "Not a tag build (CM_TAG is empty)"; exit 1; }
+          version="${tag#v}"
+          changelog_version="$(grep -m1 -E '^## [0-9]+\.[0-9]+\.[0-9]+' CHANGELOG.md | sed -E 's/^## ([0-9]+\.[0-9]+\.[0-9]+).*/\1/')"
+          echo "tag=$tag  changelog=$changelog_version"
+          if [[ "$version" != "$changelog_version" ]]; then
+            echo "Tag $tag does not match the top CHANGELOG entry ($changelog_version)." >&2
+            echo "Tags are never moved: fix the CHANGELOG and release the next version." >&2
+            exit 1
+          fi
+          echo "$version" > "$CM_BUILD_DIR/.release-version"
+      - *toolchain
+      - *swift_test
+      - *build_ios
+      - name: Read the release back as a consumer would
+        script: |
+          set -euo pipefail
+          version="$(cat "$CM_BUILD_DIR/.release-version")"
+          work="$(mktemp -d)"
+          mkdir -p "$work/Sources/Consumer"
+          cat > "$work/Sources/Consumer/Consumer.swift" <<'SWIFT'
+          import AmwalECR
+          // Touch a public symbol so a resolved-but-empty product fails here.
+          public func amwalEcrIsLinked() -> Any.Type { EcrConfig.self }
+          SWIFT
+          cat > "$work/Package.swift" <<SWIFT
+          // swift-tools-version:5.7
+          import PackageDescription
+          let package = Package(
+              name: "Consumer",
+              platforms: [.macOS(.v12)],
+              dependencies: [
+                  .package(url: "https://github.com/amwal-pay/AmwalECR-iOS-SPM.git", exact: "$version"),
+              ],
+              targets: [
+                  .target(name: "Consumer", dependencies: [.product(name: "AmwalECR", package: "AmwalECR-iOS-SPM")]),
+              ]
+          )
+          SWIFT
+          cd "$work"
+          # Resolves over the network, from the pushed tag — not from this
+          # checkout. If this fails the tag is not public, not pushed, or not
+          # a version SwiftPM will read.
+          swift package resolve
+          swift build
+          resolved="$(python3 -c 'import json;d=json.load(open("Package.resolved"));print([p for p in d["pins"] if p["identity"]=="amwalecr-ios-spm"][0]["state"]["version"])')"
+          echo "Consumer resolved AmwalECR $resolved from GitHub"
+          [[ "$resolved" == "$version" ]]
+    publishing: *email
