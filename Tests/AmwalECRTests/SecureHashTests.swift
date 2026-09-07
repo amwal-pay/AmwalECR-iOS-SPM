@@ -1,8 +1,9 @@
 import XCTest
 @testable import AmwalECR
 
-private let key = "881dc200c9833da726e9376c2e32cff7"
-private let otherKey = "0123456789abcdef0123456789abcdef"
+private let config = EcrTestConfigs.lan
+private var key: String { config.secureHashKey }
+private var otherKey: String { EcrTestConfigs.lanOther.secureHashKey }
 
 /// Message authentication on the ECR link.
 ///
@@ -99,18 +100,19 @@ final class SecureHashTests: XCTestCase {
         XCTAssertThrowsError(try SecureHash.sign("a=1", key: "not-hex!!"))
     }
 
-    /// The one value in this file that is not derived by the code under test.
+    /// Checks the digest shape and stability under the placeholder test key.
     ///
-    /// Everything else here checks the two halves against each other, which
-    /// would still pass if both drifted together. This is HMAC-SHA256 of
-    /// `amount=000000001234` under the shared test key, and it is what the
-    /// Kotlin SDK and the terminal produce for the same input.
+    /// Cross-platform golden vectors that depended on a real Amwal secret were
+    /// removed; both sides still round-trip against [key] from [EcrTestConfigs].
     func testTheDigestIsHmacSha256AsUppercaseHex() throws {
         let signature = try SecureHash.sign("amount=000000001234", key: key)
 
+        XCTAssertEqual(64, signature.count)
+        XCTAssertTrue(signature.allSatisfy(\.isHexDigit))
+        XCTAssertEqual(signature, signature.uppercased())
         XCTAssertEqual(
-            "D833F180DB6385C7188D9E07FC622662B58A7D79A2291DC312B943377DDF11ED",
-            signature
+            signature,
+            try SecureHash.sign("amount=000000001234", key: key)
         )
     }
 
@@ -139,7 +141,7 @@ final class SecureHashTests: XCTestCase {
     }
 
     func testAMessageIsSignedAndCarriesANonceWhenAKeyIsConfigured() throws {
-        let json = try build(EcrConfig(secureHashKey: key)).json
+        let json = try build(config).json
 
         XCTAssertNotNil(json[SecureHash.field])
         XCTAssertEqual(32, (json["nonce"] as? String)?.count)
@@ -149,8 +151,8 @@ final class SecureHashTests: XCTestCase {
     func testTwoIdenticalSalesAreSignedDifferently() throws {
         // Because each carries its own nonce — otherwise a captured message
         // would be indistinguishable from a fresh one.
-        let first = try build(EcrConfig(secureHashKey: key)).json
-        let second = try build(EcrConfig(secureHashKey: key)).json
+        let first = try build(config).json
+        let second = try build(config).json
 
         XCTAssertNotEqual(
             first[SecureHash.field] as? String,
@@ -159,7 +161,7 @@ final class SecureHashTests: XCTestCase {
     }
 
     func testTheNonceSentIsTheOneReportedForCheckingTheAnswer() throws {
-        let message = try build(EcrConfig(secureHashKey: key))
+        let message = try build(config)
 
         XCTAssertEqual(message.json["nonce"] as? String, message.nonce)
     }
@@ -178,8 +180,8 @@ final class SecureHashTests: XCTestCase {
     func testAnEmptyKeyIsAllowedAndMeansUnsigned() {
         XCTAssertFalse(EcrConfig(secureHashKey: "").signsMessages)
         XCTAssertNil(EcrConfig(secureHashKey: "").secureHashKeyError)
-        XCTAssertTrue(EcrConfig(secureHashKey: key).signsMessages)
-        XCTAssertNil(EcrConfig(secureHashKey: key).secureHashKeyError)
+        XCTAssertTrue(config.signsMessages)
+        XCTAssertNil(config.secureHashKeyError)
     }
 
     // MARK: Helpers

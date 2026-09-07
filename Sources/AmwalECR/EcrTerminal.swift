@@ -1,96 +1,121 @@
 import Foundation
 
-/// A POS terminal reachable over the network.
-///
-/// The iOS counterpart of the Kotlin SDK's `EcrTerminal`, method for method and
-/// outcome for outcome. One instance addresses one terminal and holds no
-/// connection between calls.
-///
-/// Every call blocks, so callers run it off the main thread — `EcrCallHandler`
-/// does that once, on a queue of its own, rather than leaving it to each caller.
-///
-/// The money-moving calls `throw` only for arguments that cannot be used — a
-/// reference the wire format cannot carry, a secret that is not hex. Nothing was
-/// sent in that case. Everything that happens on the wire is an `EcrResult`,
-/// never an exception.
+/// Result of `EcrTerminal.probeReachability()`.
+public struct EcrReachability {
+    public let reachable: Bool
+    public let host: String
+    public let port: Int
+    public let error: String?
+    /// What to show an operator: an address and port over Wi‑Fi, the cable otherwise.
+    public let endpoint: String
+
+    public init(
+        reachable: Bool,
+        host: String,
+        port: Int,
+        error: String? = nil,
+        endpoint: String? = nil
+    ) {
+        self.reachable = reachable
+        self.host = host
+        self.port = port
+        self.error = error
+        self.endpoint = endpoint ?? (port > 0 ? "\(host):\(port)" : host)
+    }
+}
+
+/// A POS terminal reachable over a channel (LAN TCP, USB cable, or anything
+/// else that can carry one request and bring back one answer).
 public final class EcrTerminal {
 
-    private let host: String
+    private let channel: EcrChannel
     private let serialNumber: String
     private let config: EcrConfig
     private let logger: EcrLogger
 
-    /// The socket of the exchange currently in flight, so [cancel] has
-    /// something to shut down. Guarded because cancel arrives from elsewhere.
-    private var live: EcrSocket?
     private let liveLock = NSLock()
     private var cancelled = false
 
-    /// Addresses one terminal. Nothing is opened here: each call makes its own
-    /// connection and closes it again.
+    /// The terminal reached through an arbitrary byte channel.
+    ///
+    /// Prefer `init(host:…)` for LAN, or `EcrSessions.usbCableTerminal` when the
+    /// caller already holds a cable channel.
     public init(
-        host: String,
+        channel: EcrChannel,
         serialNumber: String = "",
         config: EcrConfig = EcrConfig(),
         logger: EcrLogger = .none
     ) {
-        self.host = host
+        self.channel = channel
         self.serialNumber = serialNumber
         self.config = config
         self.logger = logger
     }
 
-    /// Whether the terminal is listening.
+    /// The terminal at an address on the local network.
     ///
-    /// Proves the port is open, not that the terminal is idle — a terminal
-    /// already taking a payment answers a handshake too.
+    /// Kept so callers that address a terminal by IP read exactly as they always
+    /// did; it builds a `TcpEcrChannel` and hands it to the channel initialiser.
+    public convenience init(
+        host: String,
+        serialNumber: String = "",
+        config: EcrConfig = EcrConfig(),
+        logger: EcrLogger = .none
+    ) {
+        self.init(
+            channel: TcpEcrChannel(
+                host: host,
+                port: config.port,
+                connectTimeout: config.connectTimeout
+            ),
+            serialNumber: serialNumber,
+            config: config,
+            logger: logger
+        )
+    }
+
     public func isReachable() -> Bool {
-        let socket = EcrSocket()
-        defer { socket.close() }
-        do {
-            try socket.connect(host: host, port: config.port, timeout: config.probeTimeout)
-            return true
-        } catch {
-            logger.debug("Probe failed for \(host):\(config.port) — \(error)")
-            return false
+        probeReachability().reachable
+    }
+
+    /// Asks the channel whether the terminal is there, before sending anything.
+    public func probeReachability() -> EcrReachability {
+        let problem = channel.probe(timeout: config.probeTimeout)
+        if let problem {
+            logger.debug("Probe failed for \(channel.endpoint) — \(problem)")
         }
+        return EcrReachability(
+            reachable: problem == nil,
+            host: channel.host,
+            port: channel.port,
+            error: problem,
+            endpoint: channel.endpoint
+        )
     }
 
-    /// Takes a payment. The cardholder presents their card at the terminal.
-    ///
-    /// - Parameter merchantReferenceId: the till's own reference for this sale —
-    ///   an order number, a basket id, whatever the caller's system already uses
-    ///   to name it. Left out, the SDK generates one and reports it on the
-    ///   result.
-    public func sale(amount: Decimal, merchantReferenceId: String = "") throws -> EcrResult {
-        try run(.sale, amount: amount, merchantReferenceId: merchantReferenceId)
+    public func sale(amount: Decimal, merchantReference: String = "") throws -> EcrResult {
+        try run(.sale, amount: amount, merchantReference: merchantReference)
     }
 
-    /// Cancels an earlier transaction in full, by its receipt number.
-    ///
-    /// - Parameter merchantReferenceId: the till's own reference for the void.
-    ///   This names the cancellation, not the transaction being cancelled — that
-    ///   one is named by `receiptNumber`.
     public func void(
         receiptNumber: String,
         originalTerminalId: String = "",
-        merchantReferenceId: String = ""
+        merchantReference: String = ""
     ) throws -> EcrResult {
         try run(
             .void,
             originalStan: receiptNumber,
             originalTerminalId: originalTerminalId,
-            merchantReferenceId: merchantReferenceId
+            merchantReference: merchantReference
         )
     }
 
-    /// Returns money against an earlier transaction, in full or in part.
     public func refund(
         amount: Decimal,
         receiptNumber: String,
         transactionDate: String,
         originalTerminalId: String = "",
-        merchantReferenceId: String = ""
+        merchantReference: String = ""
     ) throws -> EcrResult {
         try run(
             .refund,
@@ -98,21 +123,17 @@ public final class EcrTerminal {
             originalStan: receiptNumber,
             originalTerminalId: originalTerminalId,
             originalDate: transactionDate,
-            merchantReferenceId: merchantReferenceId
+            merchantReference: merchantReference
         )
     }
 
-    /// Runs any operation that moves money.
-    ///
-    /// Rejects the read-only types the same way the Kotlin SDK does, so a
-    /// caller that gets it wrong is told on both platforms rather than one.
     public func run(
         _ type: EcrTransactionType,
         amount: Decimal? = nil,
         originalStan: String = "",
         originalTerminalId: String = "",
         originalDate: String = "",
-        merchantReferenceId: String = ""
+        merchantReference: String = ""
     ) throws -> EcrResult {
         precondition(type.movesMoney, "\(type.displayName) is run with inquire()")
 
@@ -122,30 +143,26 @@ public final class EcrTerminal {
             originalStan: originalStan,
             originalTerminalId: originalTerminalId,
             originalDate: originalDate,
-            merchantReferenceId: merchantReferenceId
+            merchantReference: merchantReference
         )
 
         switch exchange(message) {
         case let .failure(failure):
-            return lost(message.merchantReferenceId, failure)
+            return lost(message.merchantReference, failure)
         case let .success(json):
             return EcrTerminal.result(
                 from: json,
-                merchantReferenceId: message.merchantReferenceId,
+                merchantReference: message.merchantReference,
                 minorUnitDigits: config.minorUnitDigits
             )
         }
     }
 
-    /// Asks what became of an earlier transaction, without touching it.
-    ///
-    /// Safe to repeat, and answered even while the terminal is taking a
-    /// payment — which is when a till most needs it.
     public func inquire(
         receiptNumber: String,
         transactionDate: String,
         originalTerminalId: String = "",
-        merchantReferenceId: String = ""
+        merchantReference: String = ""
     ) throws -> EcrInquiry {
         guard !receiptNumber.trimmed.isEmpty else {
             throw EcrInvalidArgument("An inquiry needs a receipt number")
@@ -156,45 +173,17 @@ public final class EcrTerminal {
             originalStan: receiptNumber,
             originalTerminalId: originalTerminalId,
             originalDate: transactionDate,
-            merchantReferenceId: merchantReferenceId
+            merchantReference: merchantReference
         )
 
         return inquiryAnswer(message)
     }
 
-    /// Asks what became of the transaction this till named [originalReference],
-    /// without touching it.
-    ///
-    /// This is the answer to an outcome you never received. A receipt number
-    /// arrives *in* the terminal's answer, so after a timeout, a lost connection
-    /// or an unauthenticated answer there is no receipt number to quote — but the
-    /// reference you sent the request with is still yours. That is what this
-    /// looks the transaction up by.
-    ///
-    /// ```swift
-    /// let result = try terminal.sale(amount: total, merchantReferenceId: order.number)
-    /// if case .failed = result {
-    ///     // Never retry here — find out first.
-    ///     switch try terminal.inquireByReference(order.number) {
-    ///     case let .found(_, transaction, _): reconcile(transaction)
-    ///     case .notFound:                     break  // nothing was taken
-    ///     case .failed:                       break  // still unknown; ask later
-    ///     }
-    /// }
-    /// ```
-    ///
-    /// - Parameters:
-    ///   - originalReference: the reference the earlier transaction was sent
-    ///     with — not a reference for this inquiry, which is
-    ///     `merchantReferenceId`.
-    ///   - transactionDate: the day the original was taken, as `yyyyMMdd`.
-    ///     Optional: a reference is not scoped to a day the way a receipt number
-    ///     is.
     public func inquireByReference(
         _ originalReference: String,
         transactionDate: String = "",
         originalTerminalId: String = "",
-        merchantReferenceId: String = ""
+        merchantReference: String = ""
     ) throws -> EcrInquiry {
         guard !originalReference.trimmed.isEmpty else {
             throw EcrInvalidArgument("An inquiry by reference needs the original's reference")
@@ -205,18 +194,17 @@ public final class EcrTerminal {
             originalTerminalId: originalTerminalId,
             originalDate: transactionDate,
             originalReference: originalReference,
-            merchantReferenceId: merchantReferenceId
+            merchantReference: merchantReference
         )
 
         return inquiryAnswer(message)
     }
 
-    /// Fetches an earlier transaction's e-receipt.
     public func receipt(
         receiptNumber: String,
         transactionDate: String,
         originalTerminalId: String = "",
-        merchantReferenceId: String = ""
+        merchantReference: String = ""
     ) throws -> EcrReceipt {
         guard !receiptNumber.trimmed.isEmpty else {
             throw EcrInvalidArgument("A receipt needs a receipt number")
@@ -227,85 +215,61 @@ public final class EcrTerminal {
             originalStan: receiptNumber,
             originalTerminalId: originalTerminalId,
             originalDate: transactionDate,
-            merchantReferenceId: merchantReferenceId
+            merchantReference: merchantReference
         )
 
         switch exchange(message) {
         case let .failure(failure):
-            return .failed(merchantReferenceId: message.merchantReferenceId, failure: failure)
+            return .failed(merchantReference: message.merchantReference, failure: failure)
         case let .success(json):
             return EcrTerminal.receipt(
                 from: json,
-                merchantReferenceId: message.merchantReferenceId
+                merchantReference: message.merchantReference
             )
         }
     }
 
-    /// Abandons the exchange in flight, from another thread.
-    ///
-    /// The terminal is not told and does not stop. A cancelled money-moving
-    /// request has an unknown outcome: reconcile with [inquire], never retry.
     public func cancel() {
         liveLock.lock()
         cancelled = true
-        let socket = live
         liveLock.unlock()
-        socket?.cancel()
+        (channel as? TcpEcrChannel)?.cancel()
     }
 
     private func inquiryAnswer(_ message: EcrMessage) -> EcrInquiry {
         switch exchange(message) {
         case let .failure(failure):
-            return .failed(merchantReferenceId: message.merchantReferenceId, failure: failure)
+            return .failed(merchantReference: message.merchantReference, failure: failure)
         case let .success(json):
             return EcrTerminal.inquiry(
                 from: json,
-                merchantReferenceId: message.merchantReferenceId,
+                merchantReference: message.merchantReference,
                 minorUnitDigits: config.minorUnitDigits
             )
         }
     }
 
-    /// Turns a lost exchange into a result, asking the terminal what became of
-    /// the transaction where that can be answered.
-    ///
-    /// The request went out and no answer came back, which is the one situation a
-    /// till cannot resolve on its own — and the thing it reaches for instead is
-    /// sending the sale again, which charges the cardholder twice. So the
-    /// question is asked here, once, on a fresh connection.
-    ///
-    /// The finding is attached rather than substituted: a failed result whose
-    /// `recovered` is `.found` still says the exchange failed, because it did.
-    /// What changed is that the outcome is no longer unknown.
     private func lost(_ reference: String, _ failure: EcrFailure) -> EcrResult {
         let plain = EcrResult.failed(
-            merchantReferenceId: reference,
+            merchantReference: reference,
             failure: failure,
             recovered: nil
         )
 
         guard config.autoInquireOnFailure else { return plain }
-        // Nothing was sent, so there is nothing to ask about — and asking would
-        // only make the caller wait through a second connection that will fail
-        // for the same reason the first one did.
         guard failure.outcomeUnknown else { return plain }
         guard !reference.isEmpty else { return plain }
 
-        // A cancelled exchange is the caller saying it is done waiting. Holding
-        // it for a second round trip is the one thing it asked not to happen;
-        // the reference is on the result, and the till can inquire when it
-        // chooses to.
         liveLock.lock()
         let abandoned = cancelled
         liveLock.unlock()
         guard !abandoned else { return plain }
 
-        // An inquiry reads and nothing more, so this cannot itself move money
-        // however it goes. A failure here leaves the outcome exactly as unknown
-        // as it already was.
+        logger.debug("Lost the answer for \(reference) — asking what became of it")
+
         let found = try? inquireByReference(reference)
 
-        return .failed(merchantReferenceId: reference, failure: failure, recovered: found)
+        return .failed(merchantReference: reference, failure: failure, recovered: found)
     }
 
     private func build(
@@ -315,7 +279,7 @@ public final class EcrTerminal {
         originalTerminalId: String = "",
         originalDate: String = "",
         originalReference: String = "",
-        merchantReferenceId: String = ""
+        merchantReference: String = ""
     ) throws -> EcrMessage {
         let message = try EcrMessage.build(
             type: type,
@@ -326,43 +290,29 @@ public final class EcrTerminal {
             originalTerminalId: originalTerminalId,
             originalDate: originalDate,
             originalReference: originalReference,
-            merchantReferenceId: merchantReferenceId
+            merchantReference: merchantReference
         )
 
         logger.debug(
-            "Sending \(type.rawValue) \(message.merchantReferenceId) "
-                + "to \(host):\(config.port)"
+            "Sending \(type.rawValue) \(message.merchantReference) "
+                + "to \(channel.endpoint)"
         )
         logger.debug(EcrMessageCodec.text(message.json))
         return message
     }
 
-    /// One request, one answer — or why there was none.
     private func exchange(_ message: EcrMessage) -> Result<[String: Any], EcrFailure> {
-        let socket = EcrSocket()
-
         liveLock.lock()
         if cancelled {
             liveLock.unlock()
             return .failure(.connectionLost("Cancelled before the request was sent"))
         }
-        live = socket
         liveLock.unlock()
 
-        defer {
-            socket.close()
-            liveLock.lock()
-            live = nil
-            liveLock.unlock()
-        }
-
         do {
-            let packet = try EcrMessageCodec.encode(message)
-            try socket.connect(host: host, port: config.port, timeout: config.connectTimeout)
-            socket.setReadTimeout(config.responseTimeout)
-            try socket.write(packet)
-
-            let answer = try EcrMessageCodec.decode(from: socket)
+            let body = try JSONSerialization.data(withJSONObject: message.json, options: [])
+            let reply = try channel.exchange(body: body, timeout: config.responseTimeout)
+            let answer = try EcrMessageCodec.parse(reply)
             logger.debug("Received \(EcrMessageCodec.text(answer))")
 
             if let rejection = untrustworthy(answer, sent: message) {
@@ -370,9 +320,26 @@ public final class EcrTerminal {
                 return .failure(rejection)
             }
             return .success(answer)
+        } catch is EcrChannelTimeout {
+            return .failure(.timeout(
+                "The terminal did not answer within \(Int(config.responseTimeout))s. "
+                    + "The transaction may still have completed — inquire before retrying."
+            ))
         } catch let error as EcrSocket.SocketError {
-            return .failure(EcrTerminal.failure(for: error, host: host, port: config.port,
-                                                responseTimeout: config.responseTimeout))
+            return .failure(EcrTerminal.failure(
+                for: error,
+                endpoint: channel.endpoint,
+                responseTimeout: config.responseTimeout
+            ))
+        } catch let error as EcrFrameError {
+            let reason = error.errorDescription ?? "Framing error"
+            if reason.contains("empty message") || reason.contains("does not fit") {
+                return .failure(.malformed(reason))
+            }
+            if reason.contains("closed the connection") {
+                return .failure(.connectionLost(reason))
+            }
+            return .failure(.unreachable("\(reason) (\(channel.endpoint))"))
         } catch let error as EcrMessageCodec.CodecError {
             switch error {
             case let .tooLarge(message):
@@ -383,31 +350,20 @@ public final class EcrTerminal {
                 return .failure(.malformed(message))
             }
         } catch {
-            return .failure(.malformed(error.localizedDescription))
+            let reason = error.localizedDescription
+            if reason.contains("not valid JSON") || reason.contains("empty message") {
+                return .failure(.malformed(reason))
+            }
+            if reason.contains("closed the connection") {
+                return .failure(.connectionLost(reason))
+            }
+            return .failure(.unreachable("\(reason) (\(channel.endpoint))"))
         }
     }
 
-    /// Why this answer must not be believed, or nil when it can be.
-    ///
-    /// Checking the answer matters as much as signing the request. An answer is
-    /// what decides whether the till hands over the goods, so anything on the
-    /// network that replies on the terminal's port before the terminal does could
-    /// otherwise claim `approved` for a payment that never happened — without
-    /// ever touching the payment backend.
-    ///
-    /// The outcome is [EcrFailure.unauthenticated] rather than a decline, because
-    /// a rejected answer says nothing about what the terminal did. The
-    /// transaction may well have completed; it simply cannot be confirmed from
-    /// here.
     private func untrustworthy(_ answer: [String: Any], sent: EcrMessage) -> EcrFailure? {
         guard config.signsMessages else { return nil }
 
-        // Told apart because the two mean different things to whoever has to fix
-        // it. No signature at all is a terminal that has no key — signing is
-        // switched on per terminal by TMS issuing one, so a till configured with
-        // a key can be pointed at a terminal that has none, and every answer
-        // then arrives unsigned. A signature that does not match is two keys
-        // that are not the same.
         guard !ecrString(answer, SecureHash.field).isEmpty else {
             return .unauthenticated(
                 "The terminal's answer carried no signature. This till is set to "
@@ -424,8 +380,6 @@ public final class EcrTerminal {
             )
         }
 
-        // Binds the answer to this request. A correctly signed answer to an
-        // earlier transaction, replayed onto this connection, fails here.
         guard ecrString(answer, "nonce") == sent.nonce else {
             return .unauthenticated(
                 "The answer belongs to a different request. The transaction "
@@ -436,19 +390,14 @@ public final class EcrTerminal {
         return nil
     }
 
-    /// Maps a socket error onto the SDK's failures.
-    ///
-    /// The mapping is the point of the whole class: a timeout is not a decline,
-    /// and calling it one is how a customer gets charged twice.
     private static func failure(
         for error: EcrSocket.SocketError,
-        host: String,
-        port: Int,
+        endpoint: String,
         responseTimeout: TimeInterval
     ) -> EcrFailure {
         switch error {
         case let .unreachable(message):
-            return .unreachable("\(message) (\(host):\(port))")
+            return .unreachable("\(message) (\(endpoint))")
         case .timedOut:
             return .timeout(
                 "The terminal did not answer within \(Int(responseTimeout))s. "
@@ -457,9 +406,6 @@ public final class EcrTerminal {
         case let .closed(message):
             return .connectionLost(message)
         case .cancelled:
-            // The handler turns this into the channel's `cancelled` kind. Named
-            // connectionLost here because that is what happened to the socket,
-            // and it carries the same "outcome unknown" weight.
             return .connectionLost("The exchange was cancelled by the caller")
         }
     }

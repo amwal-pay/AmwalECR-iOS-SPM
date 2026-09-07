@@ -2,107 +2,128 @@ import Foundation
 
 /// Reading the terminal's answer.
 ///
-/// A direct translation of the Kotlin SDK's `toResult`, `toInquiry` and
-/// `toReceipt`, kept in one file so the two can be read side by side. The
-/// payloads in `ecr-sdk/src/test/.../InquiryReadingTest.kt` are the same ones
-/// `EcrResponseReaderTests` uses here, for exactly that reason.
+/// Mirrors the Kotlin SDK's `toEcrResult`, `toInquiry` and `toReceipt`.
 extension EcrTerminal {
 
-    /// The backend's code for a plain approval.
-    static let approvedCode = "00"
-
-    /// Reads the terminal's answer into one of the three outcomes.
-    ///
-    /// `approved` is authoritative and is read first. A partial approval that
-    /// the operator then voided comes back carrying the bank's own `00`,
-    /// because the bank did approve before the void undid it — deciding from
-    /// the code alone books that as a sale.
     static func result(
         from json: [String: Any],
-        merchantReferenceId: String,
+        merchantReference: String,
         minorUnitDigits: Int
     ) -> EcrResult {
-        let responseCode = ecrString(json, "responseCode")
-        let approved = strictBool(json["approved"]) ?? (responseCode == approvedCode)
+        let envelope = EcrResponseEnvelope.parse(json)
+        let data = envelope.data
+        let resolvedReference = envelope.merchantReference.isEmpty
+            ? merchantReference
+            : envelope.merchantReference
 
-        guard approved else {
+        if !envelope.success {
             return .declined(
                 EcrDeclined(
-                    merchantReferenceId: merchantReferenceId,
-                    responseCode: responseCode,
-                    reason: ecrString(json, "responseMessage"),
+                    merchantReference: resolvedReference,
+                    responseCode: envelope.responseCode,
+                    reason: envelope.displayMessage.isEmpty ? "Declined" : envelope.displayMessage,
                     nextStep: EcrNextStep.of(ecrString(json, "nextStep")),
                     raw: EcrMessageCodec.text(json)
                 )
             )
         }
 
+        let amountMajor = settledAmountMajor(
+            data: data,
+            minorUnitDigits: minorUnitDigits,
+            root: json
+        )
+
+        let requestedMajor: String = {
+            if let data = data {
+                let amount = ecrString(data, "amount")
+                if !amount.isEmpty { return amount }
+            }
+            return majorUnits(ecrString(json, "requestedAmount"), digits: minorUnitDigits)
+        }()
+
+        let rrn = {
+            let fromData = data.map { ecrString($0, "rrn") } ?? ""
+            return fromData.isEmpty ? ecrString(json, "rrn") : fromData
+        }()
+
+        let authCode = {
+            let fromData = data.map { ecrString($0, "authCode") } ?? ""
+            return fromData.isEmpty ? ecrString(json, "authCode") : fromData
+        }()
+
+        let maskedPan = {
+            if let data = data {
+                let cardMask = ecrString(data, "cardMask")
+                if !cardMask.isEmpty { return cardMask }
+                let masked = ecrString(data, "maskedPan")
+                if !masked.isEmpty { return masked }
+            }
+            return ecrString(json, "maskedPan")
+        }()
+
+        let partialApproval = data.map { ecrFlag($0, "isPartialApprove") } ?? ecrFlag(json, "partialApproval")
+
         return .approved(
             EcrApproved(
-                merchantReferenceId: merchantReferenceId,
-                amount: EcrDecimal.majorUnits(ecrString(json, "amount"), digits: minorUnitDigits),
-                responseCode: responseCode,
-                rrn: ecrString(json, "rrn"),
-                authCode: ecrString(json, "authCode"),
-                maskedPan: ecrString(json, "maskedPan"),
-                partialApproval: strictBool(json["partialApproval"]) ?? false,
-                requestedAmount: EcrDecimal.majorUnits(
-                    ecrString(json, "requestedAmount"),
-                    digits: minorUnitDigits
-                ),
+                merchantReference: resolvedReference,
+                amount: amountMajor,
+                responseCode: envelope.responseCode,
+                rrn: rrn,
+                authCode: authCode,
+                maskedPan: maskedPan,
+                partialApproval: partialApproval,
+                requestedAmount: requestedMajor,
                 raw: EcrMessageCodec.text(json)
             )
         )
     }
 
-    /// Reads the terminal's answer to an inquiry.
-    ///
-    /// The transaction itself sits under `ecrResponse.data`, where the terminal
-    /// passes its backend's own record through; the outer fields describe the
-    /// lookup. `approved: true` there means **found**, not paid — what became
-    /// of the transaction is `data.status`.
     static func inquiry(
         from json: [String: Any],
-        merchantReferenceId: String,
+        merchantReference: String,
         minorUnitDigits: Int
     ) -> EcrInquiry {
-        let found = strictBool(json["approved"]) ?? false
-        let data = (json["ecrResponse"] as? [String: Any])?["data"] as? [String: Any]
+        let envelope = EcrResponseEnvelope.parse(json)
+        let data = envelope.data
+        let resolvedReference = envelope.merchantReference.isEmpty
+            ? merchantReference
+            : envelope.merchantReference
 
-        guard found, let data = data else {
+        guard let data = data else {
             return .notFound(
-                merchantReferenceId: merchantReferenceId,
-                reason: ecrString(json, "responseMessage"),
+                merchantReference: resolvedReference,
+                reason: envelope.displayMessage.isEmpty
+                    ? "Transaction not found"
+                    : envelope.displayMessage,
                 raw: EcrMessageCodec.text(json)
             )
         }
 
-        let type = ecrString(data, "transactionTypeDisplayName")
+        let stan = ecrString(data, "stan")
+        let typeDisplay = ecrString(data, "transactionTypeDisplayName")
         let status = ecrString(data, "status")
-        let backendAmount = ecrString(data, "amount")
 
         return .found(
-            merchantReferenceId: merchantReferenceId,
+            merchantReference: resolvedReference,
             transaction: EcrTransaction(
                 transactionId: ecrString(data, "transactionId"),
-                stan: ecrString(data, "stan"),
-                type: type.isEmpty ? ecrString(data, "transactionType") : type,
-                // A terminal that has no status to give is a terminal answering
-                // about something it does not know the fate of, which is not a
-                // reason to report a blank a till will read as a failure. Kept
-                // as a floor under the value, not as a translation: the terminal
-                // states the status itself, whether the record came from its own
-                // log or from the backend.
-                status: status.isEmpty ? (found ? "Approved" : "Declined") : status,
-                // The backend records amounts in major units already; the outer
-                // `amount` field is the minor-unit one the wire format uses.
-                amount: backendAmount.isEmpty
-                    ? EcrDecimal.majorUnits(ecrString(json, "amount"), digits: minorUnitDigits)
-                    : backendAmount,
+                stan: stan.isEmpty ? ecrString(data, "systemTraceNr") : stan,
+                type: typeDisplay.isEmpty ? ecrString(data, "transactionType") : typeDisplay,
+                status: status.isEmpty ? (envelope.success ? "Approved" : "Declined") : status,
+                partialApproval: ecrFlag(data, "isPartialApprove"),
+                authorizedAmount: ecrString(data, "authorizeAmount"),
+                amount: settledAmountMajor(data: data, minorUnitDigits: minorUnitDigits, root: json),
                 totalAmount: ecrString(data, "totalAmount"),
-                currency: ecrString(data, "currency"),
+                currency: {
+                    let currency = ecrString(data, "currency")
+                    return currency.isEmpty ? ecrString(data, "currencyId") : currency
+                }(),
                 transactionTime: ecrString(data, "transactionTime"),
-                maskedPan: ecrString(data, "cardNumber"),
+                maskedPan: {
+                    let cardMask = ecrString(data, "cardMask")
+                    return cardMask.isEmpty ? ecrString(data, "cardNumber") : cardMask
+                }(),
                 cardHolderName: ecrString(data, "cardHolderName"),
                 rrn: ecrString(data, "rrn"),
                 authCode: ecrString(data, "authCode"),
@@ -116,38 +137,50 @@ extension EcrTerminal {
         )
     }
 
-    /// Reads the terminal's answer to a receipt request.
-    ///
-    /// An empty or absent `receiptUrl` means no receipt, whatever the response
-    /// code says. A receipt with no URL is not a receipt.
-    static func receipt(from json: [String: Any], merchantReferenceId: String) -> EcrReceipt {
-        let data = (json["ecrResponse"] as? [String: Any])?["data"] as? [String: Any]
-        let url = data.map { ecrString($0, "receiptUrl") } ?? ""
+    static func receipt(from json: [String: Any], merchantReference: String) -> EcrReceipt {
+        let envelope = EcrResponseEnvelope.parse(json)
+        let resolvedReference = envelope.merchantReference.isEmpty
+            ? merchantReference
+            : envelope.merchantReference
+        let url = envelope.data.map { ecrString($0, "receiptUrl") } ?? ""
 
         guard !url.isEmpty else {
             return .unavailable(
-                merchantReferenceId: merchantReferenceId,
-                reason: ecrString(json, "responseMessage"),
+                merchantReference: resolvedReference,
+                reason: envelope.displayMessage.isEmpty
+                    ? "The receipt could not be generated"
+                    : envelope.displayMessage,
                 raw: EcrMessageCodec.text(json)
             )
         }
 
-        return .ready(merchantReferenceId: merchantReferenceId, url: url, raw: EcrMessageCodec.text(json))
+        return .ready(
+            merchantReference: resolvedReference,
+            url: url,
+            raw: EcrMessageCodec.text(json)
+        )
     }
 
-    /// A boolean the way the Kotlin SDK reads one: a real JSON boolean or the
-    /// exact text `"true"`/`"false"`, and `nil` for anything else — which is
-    /// what makes "absent" distinguishable from "false" at the call sites that
-    /// need to fall back to the response code.
-    private static func strictBool(_ value: Any?) -> Bool? {
-        guard let value = value, !(value is NSNull) else { return nil }
-        if let number = value as? NSNumber, CFGetTypeID(number) == CFBooleanGetTypeID() {
-            return number.boolValue
+    /// The amount actually settled, in major units.
+    static func settledAmountMajor(
+        data: [String: Any]?,
+        minorUnitDigits: Int,
+        root: [String: Any]
+    ) -> String {
+        if let data = data {
+            if let authorized = Decimal(string: ecrString(data, "authorizeAmount")),
+               authorized > 0 {
+                return ecrString(data, "authorizeAmount")
+            }
+            let amount = ecrString(data, "amount")
+            if !amount.isEmpty { return amount }
         }
-        switch value as? String {
-        case "true": return true
-        case "false": return false
-        default: return nil
-        }
+        return majorUnits(ecrString(root, "amount"), digits: minorUnitDigits)
+    }
+
+    static func majorUnits(_ minorUnits: String, digits: Int) -> String {
+        if minorUnits.isEmpty { return "" }
+        guard minorUnits.allSatisfy(\.isNumber) else { return minorUnits }
+        return EcrDecimal.majorUnits(minorUnits, digits: digits)
     }
 }

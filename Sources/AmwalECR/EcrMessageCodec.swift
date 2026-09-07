@@ -6,13 +6,12 @@ import Foundation
 /// bytes of UTF-8 JSON. TCP carries no message boundaries, so the header is
 /// what tells the reader where one message ends and the next begins.
 ///
-/// This is the single place the format lives on iOS, and it matches the Kotlin
-/// SDK's `EcrMessageCodec` and the terminal's own copy. The three must change
-/// together — see `ecr-sdk/docs/protocol.md`.
+/// Framing lives in public `EcrFrames` so external channels (USB, Bluetooth)
+/// share one implementation. This codec owns JSON encode/parse on top of that.
+///
+/// This matches the Kotlin SDK's `EcrMessageCodec` and the terminal's own copy.
+/// The three must change together — see `ecr-sdk/docs/protocol.md`.
 enum EcrMessageCodec {
-
-    private static let headerBytes = 2
-    private static let maxMessageBytes = 0xFFFF
 
     enum CodecError: Error {
         case tooLarge(String)
@@ -27,26 +26,19 @@ enum EcrMessageCodec {
         // Kotlin SDK sends, which is insertion order.
         let body = try JSONSerialization.data(withJSONObject: message.json, options: [])
 
-        guard body.count <= maxMessageBytes else {
-            throw CodecError.tooLarge("Request exceeds \(maxMessageBytes) bytes")
+        do {
+            return try EcrFrames.wrap(body)
+        } catch {
+            throw CodecError.tooLarge("Request exceeds \(EcrFrames.maxBodyBytes) bytes")
         }
-
-        var packet = Data(capacity: headerBytes + body.count)
-        packet.append(UInt8((body.count >> 8) & 0xFF))
-        packet.append(UInt8(body.count & 0xFF))
-        packet.append(body)
-        return packet
     }
 
-    /// Reads exactly one framed message from [socket].
-    static func decode(from socket: EcrSocket) throws -> [String: Any] {
-        let header = try socket.readExactly(headerBytes, what: "response header")
-        let length = (Int(header[header.startIndex]) << 8) | Int(header[header.startIndex + 1])
-
-        guard length > 0 else { throw CodecError.empty }
-
-        let body = try socket.readExactly(length, what: "response body")
-
+    /// One message body, as the object it claims to be.
+    ///
+    /// Separate from reading it off the wire, because a channel that is not a
+    /// stream — a USB transfer, a Bluetooth packet — already holds the bytes by
+    /// the time anyone wants them parsed.
+    static func parse(_ body: Data) throws -> [String: Any] {
         guard
             let parsed = try? JSONSerialization.jsonObject(with: body, options: []),
             let json = parsed as? [String: Any]
@@ -54,8 +46,25 @@ enum EcrMessageCodec {
             let text = String(data: body, encoding: .utf8) ?? "<not UTF-8>"
             throw CodecError.notJson("Terminal returned a message that is not valid JSON: \(text)")
         }
-
         return json
+    }
+
+    /// Reads exactly one framed message from [socket].
+    static func decode(from socket: EcrSocket) throws -> [String: Any] {
+        let body: Data
+        do {
+            body = try EcrFrames.readBody { count, what in
+                try socket.readExactly(count, what: what)
+            }
+        } catch let error as EcrFrameError {
+            let reason = error.errorDescription ?? ""
+            if reason.contains("empty message") {
+                throw CodecError.empty
+            }
+            throw error
+        }
+
+        return try parse(body)
     }
 
     /// The terminal's answer as JSON text, for the `raw` field callers get.

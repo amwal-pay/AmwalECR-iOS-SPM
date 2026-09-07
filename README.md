@@ -149,11 +149,17 @@ not hex. Nothing is sent in that case. Everything that happens on the wire is an
 ## Signing the link
 
 A terminal refuses what it cannot verify, so in practice a till needs the secret
-Amwal issues for it:
+Amwal issues for it. **The app owns persistence** (Keychain / settings) and
+passes **one** value on `EcrConfig.secureHashKey` for the selected mode — LAN
+(Wi‑Fi / USB cable) and Web Service use different secrets, but the SDK only
+consumes the field you assign:
 
 ```swift
+// App-owned: load the secret for this terminal mode (never hardcode in source)
+let secret = settings.secureHashKey(for: selectedMode)
+
 var config = EcrConfig()
-config.secureHashKey = secret          // hex, from the keychain — never in source
+config.secureHashKey = secret
 let terminal = EcrTerminal(host: host, serialNumber: serial, config: config)
 ```
 
@@ -247,6 +253,11 @@ not duplicated here:
 ```bash
 swift test            # 37 tests, no simulator needed
 ```
+
+Unit tests share signing placeholders via `EcrTestConfigs` (aligned with
+`ecr_sdk`): `SECURE_HASH_KEY_ECR_WIFI`, `SECURE_HASH_KEY_ECR_WIFI_OTHER`, and
+`SECURE_HASH_KEY_WEBSERVICE`, exposed as `lan` / `lanOther` / `webService`
+configs. Never commit real Amwal keys.
 
 The suite is not incidental to the platform story: `EcrDecimalTests`,
 `EcrMessageTests` and `EcrResponseReaderTests` assert this SDK against the Kotlin

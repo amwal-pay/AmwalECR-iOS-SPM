@@ -2,10 +2,6 @@ import XCTest
 @testable import AmwalECR
 
 /// The request as it goes on the wire.
-///
-/// The framing and the field rules are a contract with the terminal, which has
-/// its own copy of both. These assert the iOS side against
-/// `ecr-sdk/docs/protocol.md` §3.
 final class EcrMessageTests: XCTestCase {
 
     private let config = EcrConfig()
@@ -17,7 +13,7 @@ final class EcrMessageTests: XCTestCase {
         terminalId: String = "",
         date: String = "",
         originalReference: String = "",
-        merchantReferenceId: String = "",
+        merchantReference: String = "",
         config: EcrConfig? = nil
     ) throws -> [String: Any] {
         try EcrMessage.build(
@@ -29,7 +25,7 @@ final class EcrMessageTests: XCTestCase {
             originalTerminalId: terminalId,
             originalDate: date,
             originalReference: originalReference,
-            merchantReferenceId: merchantReferenceId
+            merchantReference: merchantReference
         ).json
     }
 
@@ -42,7 +38,7 @@ final class EcrMessageTests: XCTestCase {
         XCTAssertEqual("512", json["currencyCode"] as? String)
         XCTAssertEqual("ECR01", json["ecrId"] as? String)
         XCTAssertEqual(14, (json["transactionDateTime"] as? String)?.count)
-        XCTAssertEqual(12, (json["merchantReferenceId"] as? String)?.count)
+        XCTAssertEqual(12, (json["merchantReference"] as? String)?.count)
     }
 
     func testAGeneratedReferenceIsTwelveUppercaseHexCharacters() {
@@ -53,18 +49,14 @@ final class EcrMessageTests: XCTestCase {
         XCTAssertTrue(reference.allSatisfy { $0.isHexDigit })
     }
 
-    // ── The till's own reference ──────────────────────────────────────────
-
     func testTheCallersReferenceIsSentAsGiven() throws {
-        // A till that already numbers its orders passes that number, so the same
-        // string names the transaction in its books and in the terminal's.
         let json = try build(
             .sale,
             amount: Decimal(string: "1.234"),
-            merchantReferenceId: "ORDER-4471"
+            merchantReference: "ORDER-4471"
         )
 
-        XCTAssertEqual("ORDER-4471", json["merchantReferenceId"] as? String)
+        XCTAssertEqual("ORDER-4471", json["merchantReference"] as? String)
     }
 
     func testAReferenceIsTrimmedAndAnEmptyOneIsGenerated() throws {
@@ -76,8 +68,6 @@ final class EcrMessageTests: XCTestCase {
     }
 
     func testAReferenceTheWireFormatCannotCarryIsRefused() {
-        // '&' and '=' are the separators the signature is built from: a
-        // reference carrying one could make two different messages hash alike.
         for bad in ["order&1", "order=1", "order 1", String(repeating: "x", count: 33)] {
             XCTAssertThrowsError(try EcrMessage.merchantReference(bad), bad) { error in
                 XCTAssertTrue(error is EcrInvalidArgument, "expected EcrInvalidArgument for \(bad)")
@@ -86,8 +76,6 @@ final class EcrMessageTests: XCTestCase {
     }
 
     func testOnlyAReadOnlyTypeMayNameATransactionByReference() throws {
-        // Acting on a transaction goes by the number on the printed receipt,
-        // which is what the operator at the terminal is reading.
         let inquiry = try build(.inquiry, date: "20260809", originalReference: "ORDER-4471")
         XCTAssertEqual("ORDER-4471", inquiry["originalMerchantReference"] as? String)
 
@@ -98,8 +86,6 @@ final class EcrMessageTests: XCTestCase {
     func testFieldsThatDoNotApplyAreAbsentRatherThanEmpty() throws {
         let sale = try build(.sale, amount: Decimal(string: "1.234"))
 
-        // The terminal reads a field's presence as meaning the operation uses
-        // it, so an empty `stan` on a sale is not the same message as no `stan`.
         XCTAssertNil(sale["stan"])
         XCTAssertNil(sale["originalTransactionDate"])
         XCTAssertNil(sale["originalTerminalId"])
@@ -132,7 +118,6 @@ final class EcrMessageTests: XCTestCase {
             "31629",
             try build(.void, stan: "215", terminalId: "31629")["originalTerminalId"] as? String
         )
-        // A sale has no original, so there is no other terminal to name.
         XCTAssertNil(
             try build(
                 .sale,
@@ -143,21 +128,16 @@ final class EcrMessageTests: XCTestCase {
     }
 
     func testReceiptNumbersArePaddedToSixDigits() {
-        // The terminal stores them padded; an operator types "24".
         XCTAssertEqual("000024", EcrMessage.paddedStan("24"))
         XCTAssertEqual("000215", EcrMessage.paddedStan("215"))
         XCTAssertEqual("000215", EcrMessage.paddedStan("000215"))
         XCTAssertEqual("1234567", EcrMessage.paddedStan("1234567"))
         XCTAssertEqual("", EcrMessage.paddedStan("0000"))
         XCTAssertEqual("", EcrMessage.paddedStan(""))
-        // Non-digits are dropped, so "no. 215" is still 000215.
         XCTAssertEqual("000215", EcrMessage.paddedStan("no. 215"))
     }
 
     func testTheTimestampIsGregorianWhateverTheDeviceIsSetTo() {
-        // A device on a non-Gregorian calendar must still send a Gregorian
-        // timestamp, or the terminal files the transaction under a year that
-        // does not exist.
         var components = DateComponents()
         components.year = 2026
         components.month = 8
@@ -174,7 +154,7 @@ final class EcrMessageTests: XCTestCase {
     }
 
     func testTheFramingIsATwoByteBigEndianLengthThenTheBody() throws {
-        let message = EcrMessage(merchantReferenceId: "A1B2C3D4E5F6", json: ["a": "b"])
+        let message = EcrMessage(merchantReference: "A1B2C3D4E5F6", json: ["a": "b"])
         let packet = try EcrMessageCodec.encode(message)
 
         let body = packet.dropFirst(2)
@@ -186,7 +166,7 @@ final class EcrMessageTests: XCTestCase {
 
     func testAMessageTooLargeToFrameIsRefused() {
         let message = EcrMessage(
-            merchantReferenceId: "A1",
+            merchantReference: "A1",
             json: ["big": String(repeating: "x", count: 70_000)]
         )
 
@@ -205,9 +185,7 @@ final class EcrMessageTests: XCTestCase {
         ]
 
         XCTAssertEqual("hello", ecrString(json, "text"))
-        // An identifier, not a quantity: 31629, never 31629.0.
         XCTAssertEqual("31629", ecrString(json, "number"))
-        // Absent, not the text "null".
         XCTAssertEqual("", ecrString(json, "null"))
         XCTAssertEqual("", ecrString(json, "missing"))
     }
@@ -224,10 +202,6 @@ final class EcrMessageTests: XCTestCase {
         XCTAssertTrue(ecrFlag(json, "real"))
         XCTAssertTrue(ecrFlag(json, "text"))
         XCTAssertFalse(ecrFlag(json, "textFalse"))
-        // Strictly, matching Kotlin's toBooleanStrictOrNull: a numeric 1 is not
-        // true. The backend does not send flags that way, and accepting it here
-        // would make the two platforms disagree about a payload neither should
-        // ever see.
         XCTAssertFalse(ecrFlag(json, "number"))
         XCTAssertFalse(ecrFlag(json, "null"))
         XCTAssertFalse(ecrFlag(json, "missing"))

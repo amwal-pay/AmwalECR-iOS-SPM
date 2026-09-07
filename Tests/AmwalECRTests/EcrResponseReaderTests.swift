@@ -2,14 +2,55 @@ import XCTest
 @testable import AmwalECR
 
 /// Reading the terminal's answer on iOS.
-///
-/// The payloads are the ones in `ecr-sdk/docs/protocol.md` and in the Kotlin
-/// SDK's `InquiryReadingTest`, field for field, so the two hosts can be
-/// compared directly rather than trusted separately.
 final class EcrResponseReaderTests: XCTestCase {
 
     private func json(_ text: String) -> [String: Any] {
         try! JSONSerialization.jsonObject(with: Data(text.utf8)) as! [String: Any]
+    }
+
+    // MARK: - Envelope
+
+    func testUnifiedEnvelopeParsesSuccessDataAndErrorList() {
+        let wire = EcrWireResponse.parse(json("""
+        {
+          "success": true,
+          "responseCode": "00",
+          "message": "Approved",
+          "data": {
+            "amount": "1.234",
+            "merchantReference": "ORDER-1"
+          },
+          "errorList": ["first", "second"]
+        }
+        """))
+
+        XCTAssertTrue(wire.success)
+        XCTAssertEqual("00", wire.responseCode)
+        XCTAssertEqual("Approved", wire.message)
+        XCTAssertEqual("ORDER-1", wire.merchantReference)
+        XCTAssertEqual(["first", "second"], wire.errorList)
+        XCTAssertEqual("first\nsecond", wire.displayMessage)
+    }
+
+    func testLegacyMerchantReferenceIdInDataIsAccepted() {
+        let wire = EcrWireResponse.parse(json("""
+        {
+          "success": true,
+          "data": {"merchantReferenceId": "LEGACY-1"}
+        }
+        """))
+
+        XCTAssertEqual("LEGACY-1", wire.merchantReference)
+    }
+
+    func testDisplayMessageFromRawUsesErrorListFirst() {
+        let message = EcrWireResponse.displayMessageFromRaw(
+            """
+            {"success": false, "message": "Generic", "errorList": ["Specific"]}
+            """,
+            fallback: "fallback"
+        )
+        XCTAssertEqual("Specific", message)
     }
 
     // MARK: - Sales
@@ -27,14 +68,13 @@ final class EcrResponseReaderTests: XCTestCase {
               "maskedPan": "543173xxxx5785"
             }
             """),
-            merchantReferenceId: "A1B2C3D4E5F6",
+            merchantReference: "A1B2C3D4E5F6",
             minorUnitDigits: 3
         )
 
         guard case let .approved(approved) = result else {
             return XCTFail("expected approved, got \(result)")
         }
-        // 0.216, never 000000000216.
         XCTAssertEqual("0.216", approved.amount)
         XCTAssertEqual("622113155340", approved.rrn)
         XCTAssertEqual("517842", approved.authCode)
@@ -42,15 +82,36 @@ final class EcrResponseReaderTests: XCTestCase {
         XCTAssertFalse(approved.partialApproval)
     }
 
+    func testEnvelopeApprovalUsesAuthorizeAmountWhenPresent() {
+        let result = EcrTerminal.result(
+            from: json("""
+            {
+              "success": true,
+              "responseCode": "00",
+              "data": {
+                "authorizeAmount": "0.500",
+                "amount": "2.000",
+                "isPartialApprove": true
+              }
+            }
+            """),
+            merchantReference: "A1",
+            minorUnitDigits: 3
+        )
+
+        guard case let .approved(approved) = result else {
+            return XCTFail("expected approved, got \(result)")
+        }
+        XCTAssertEqual("0.500", approved.amount)
+        XCTAssertTrue(approved.partialApproval)
+    }
+
     func testApprovedIsAuthoritativeAndResponseCodeIsNot() {
-        // A partial approval the operator then voided comes back carrying the
-        // bank's own 00, because the bank did approve before the void undid it.
-        // A client deciding from the code alone books that as a sale.
         let result = EcrTerminal.result(
             from: json("""
             {"responseCode": "00", "approved": false, "responseMessage": "Voided"}
             """),
-            merchantReferenceId: "A1",
+            merchantReference: "A1",
             minorUnitDigits: 3
         )
 
@@ -64,12 +125,12 @@ final class EcrResponseReaderTests: XCTestCase {
     func testAnAbsentApprovedFlagFallsBackToTheResponseCode() {
         let approved = EcrTerminal.result(
             from: json("{\"responseCode\": \"00\", \"amount\": \"000000001000\"}"),
-            merchantReferenceId: "A1",
+            merchantReference: "A1",
             minorUnitDigits: 3
         )
         let declined = EcrTerminal.result(
             from: json("{\"responseCode\": \"51\"}"),
-            merchantReferenceId: "A1",
+            merchantReference: "A1",
             minorUnitDigits: 3
         )
 
@@ -88,16 +149,13 @@ final class EcrResponseReaderTests: XCTestCase {
               "requestedAmount": "000000002000"
             }
             """),
-            merchantReferenceId: "A1",
+            merchantReference: "A1",
             minorUnitDigits: 3
         )
 
         guard case let .approved(approved) = result else {
             return XCTFail("expected approved, got \(result)")
         }
-        // 2.000 was asked for and 0.500 was taken. The goods go out only once
-        // the remaining 1.500 is collected by other means — but this is not a
-        // refusal.
         XCTAssertTrue(approved.partialApproval)
         XCTAssertEqual("0.500", approved.amount)
         XCTAssertEqual("2.000", approved.requestedAmount)
@@ -107,12 +165,13 @@ final class EcrResponseReaderTests: XCTestCase {
         let result = EcrTerminal.result(
             from: json("""
             {
+              "success": false,
               "responseCode": "909",
-              "responseMessage": "Insufficient funds",
-              "approved": false
+              "message": "Insufficient funds",
+              "errorList": ["Card declined"]
             }
             """),
-            merchantReferenceId: "A1",
+            merchantReference: "A1",
             minorUnitDigits: 3
         )
 
@@ -120,7 +179,7 @@ final class EcrResponseReaderTests: XCTestCase {
             return XCTFail("expected declined")
         }
         XCTAssertEqual("909", declined.responseCode)
-        XCTAssertEqual("Insufficient funds", declined.reason)
+        XCTAssertEqual("Card declined", declined.reason)
     }
 
     // MARK: - Inquiries
@@ -160,7 +219,7 @@ final class EcrResponseReaderTests: XCTestCase {
     func testAFoundInquiryCarriesTheBackendsOwnRecord() {
         let inquiry = EcrTerminal.inquiry(
             from: json(found),
-            merchantReferenceId: "D4E5F6A1B2C3",
+            merchantReference: "D4E5F6A1B2C3",
             minorUnitDigits: 3
         )
 
@@ -170,23 +229,37 @@ final class EcrResponseReaderTests: XCTestCase {
         XCTAssertEqual("000208", transaction.stan)
         XCTAssertEqual("Purchase", transaction.type)
         XCTAssertEqual("Approved", transaction.status)
-        // Amounts inside `data` are already in major units — the backend's own
-        // record. The outer `amount` is the wire's minor-unit encoding.
         XCTAssertEqual("0.258", transaction.amount)
         XCTAssertEqual("OMR", transaction.currency)
         XCTAssertEqual("543173******5785", transaction.maskedPan)
-        // An identifier, not a quantity.
         XCTAssertEqual("31629", transaction.terminalId)
         XCTAssertFalse(transaction.isRefunded)
         XCTAssertTrue(transaction.canVoid)
         XCTAssertTrue(transaction.canRefund)
-        // JSON nulls read as empty, never as the text "null".
         XCTAssertEqual("", transaction.cardHolderName)
         XCTAssertEqual("", transaction.authCode)
     }
 
+    func testInquiryPartialApprovalFieldsAreReadFromData() {
+        let payload = found.replacingOccurrences(
+            of: "\"status\": \"Approved\"",
+            with: "\"status\": \"Approved\", \"isPartialApprove\": true, \"authorizeAmount\": \"0.100\""
+        )
+
+        let inquiry = EcrTerminal.inquiry(
+            from: json(payload),
+            merchantReference: "A1",
+            minorUnitDigits: 3
+        )
+
+        guard case let .found(_, transaction, _) = inquiry else {
+            return XCTFail("expected found")
+        }
+        XCTAssertTrue(transaction.partialApproval)
+        XCTAssertEqual("0.100", transaction.authorizedAmount)
+    }
+
     func testApprovedTrueOnAnInquiryMeansFoundNotPaid() {
-        // The inquiry succeeded. What became of the transaction is data.status.
         let payload = found.replacingOccurrences(
             of: "\"status\": \"Approved\"",
             with: "\"status\": \"Declined\""
@@ -194,7 +267,7 @@ final class EcrResponseReaderTests: XCTestCase {
 
         let inquiry = EcrTerminal.inquiry(
             from: json(payload),
-            merchantReferenceId: "A1",
+            merchantReference: "A1",
             minorUnitDigits: 3
         )
 
@@ -209,7 +282,7 @@ final class EcrResponseReaderTests: XCTestCase {
             from: json("""
             {"approved": true, "responseMessage": "odd", "ecrResponse": {"data": null}}
             """),
-            merchantReferenceId: "A1",
+            merchantReference: "A1",
             minorUnitDigits: 3
         )
 
@@ -217,6 +290,31 @@ final class EcrResponseReaderTests: XCTestCase {
             return XCTFail("expected notFound, got \(inquiry)")
         }
         XCTAssertEqual("odd", reason)
+    }
+
+    func testDeclinedTransactionInDataIsStillFound() {
+        let payload = """
+        {
+          "success": false,
+          "message": "Declined",
+          "data": {
+            "status": "Declined",
+            "stan": "000208",
+            "amount": "0.258"
+          }
+        }
+        """
+
+        let inquiry = EcrTerminal.inquiry(
+            from: json(payload),
+            merchantReference: "A1",
+            minorUnitDigits: 3
+        )
+
+        guard case let .found(_, transaction, _) = inquiry else {
+            return XCTFail("expected found for declined transaction record")
+        }
+        XCTAssertEqual("Declined", transaction.status)
     }
 
     func testAnInquiryThatFoundNothingCarriesTheBackendsWords() {
@@ -228,7 +326,7 @@ final class EcrResponseReaderTests: XCTestCase {
               "approved": false
             }
             """),
-            merchantReferenceId: "A1",
+            merchantReference: "A1",
             minorUnitDigits: 3
         )
 
@@ -243,14 +341,13 @@ final class EcrResponseReaderTests: XCTestCase {
 
         let inquiry = EcrTerminal.inquiry(
             from: json(payload),
-            merchantReferenceId: "A1",
+            merchantReference: "A1",
             minorUnitDigits: 3
         )
 
         guard case let .found(_, transaction, _) = inquiry else {
             return XCTFail("expected found")
         }
-        // Converted from the outer minor-unit field, as Kotlin does.
         XCTAssertEqual("0.258", transaction.amount)
     }
 
@@ -266,7 +363,7 @@ final class EcrResponseReaderTests: XCTestCase {
               }
             }
             """),
-            merchantReferenceId: "A1"
+            merchantReference: "A1"
         )
 
         guard case let .ready(_, url, _) = receipt else {
@@ -281,7 +378,7 @@ final class EcrResponseReaderTests: XCTestCase {
             "{\"responseCode\": \"00\", \"responseMessage\": \"Receipt ready\", \"ecrResponse\": {\"data\": {}}}",
             "{\"responseCode\": \"00\", \"responseMessage\": \"Receipt ready\"}",
         ] {
-            let receipt = EcrTerminal.receipt(from: json(payload), merchantReferenceId: "A1")
+            let receipt = EcrTerminal.receipt(from: json(payload), merchantReference: "A1")
 
             guard case let .unavailable(_, reason, _) = receipt else {
                 return XCTFail("expected unavailable for \(payload)")

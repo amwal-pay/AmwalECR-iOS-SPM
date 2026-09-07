@@ -2,7 +2,8 @@ import XCTest
 import Darwin
 @testable import AmwalECR
 
-private let key = "881dc200c9833da726e9376c2e32cff7"
+private let config = EcrTestConfigs.lan
+private var key: String { config.secureHashKey }
 
 /// A stand-in terminal on a real socket, so the exchange can be driven without
 /// hardware.
@@ -157,7 +158,7 @@ final class SignedExchangeTests: XCTestCase {
             "responseCode": "00",
             "responseMessage": "APPROVED",
             "approved": true,
-            "merchantReferenceId": request["merchantReferenceId"] ?? "",
+            "merchantReference": request["merchantReference"] ?? "",
             "amount": request["amount"] ?? "",
             "rrn": "622113155340",
             "authCode": "517842",
@@ -179,10 +180,10 @@ final class SignedExchangeTests: XCTestCase {
         }
 
         let result = try terminal().sale(amount: Decimal(string: "1.234")!,
-                                         merchantReferenceId: "ORDER-4471")
+                                         merchantReference: "ORDER-4471")
 
         let sent = try XCTUnwrap(server.requests.first)
-        XCTAssertEqual("ORDER-4471", sent["merchantReferenceId"] as? String)
+        XCTAssertEqual("ORDER-4471", sent["merchantReference"] as? String)
         XCTAssertEqual(32, (sent["nonce"] as? String)?.count)
         XCTAssertEqual(64, (sent[SecureHash.field] as? String)?.count)
         XCTAssertTrue(verifies(sent), "the terminal must be able to verify what we sent")
@@ -190,7 +191,7 @@ final class SignedExchangeTests: XCTestCase {
         guard case let .approved(approved) = result else {
             return XCTFail("expected approved, got \(result)")
         }
-        XCTAssertEqual("ORDER-4471", approved.merchantReferenceId)
+        XCTAssertEqual("ORDER-4471", approved.merchantReference)
         XCTAssertEqual("1.234", approved.amount)
     }
 
@@ -201,7 +202,7 @@ final class SignedExchangeTests: XCTestCase {
             [
                 "responseCode": "00",
                 "approved": true,
-                "merchantReferenceId": request["merchantReferenceId"] ?? "",
+                "merchantReference": request["merchantReference"] ?? "",
                 "amount": request["amount"] ?? "",
             ]
         }
@@ -222,7 +223,7 @@ final class SignedExchangeTests: XCTestCase {
             [
                 "responseCode": "00",
                 "approved": true,
-                "merchantReferenceId": request["merchantReferenceId"] ?? "",
+                "merchantReference": request["merchantReference"] ?? "",
                 "nonce": request["nonce"] ?? "",
             ]
         }
@@ -249,12 +250,12 @@ final class SignedExchangeTests: XCTestCase {
             var reply: [String: Any] = [
                 "responseCode": "00",
                 "approved": true,
-                "merchantReferenceId": request["merchantReferenceId"] ?? "",
+                "merchantReference": request["merchantReference"] ?? "",
                 "nonce": request["nonce"] ?? "",
             ]
             reply[SecureHash.field] = try? SecureHash.sign(
                 SecureHash.compose(reply),
-                key: "0123456789abcdef0123456789abcdef"
+                key: EcrTestConfigs.SECURE_HASH_KEY_ECR_WIFI_OTHER
             )
             return reply
         }
@@ -317,7 +318,7 @@ final class SignedExchangeTests: XCTestCase {
         }
 
         _ = try terminal(logger: logger).sale(amount: Decimal(string: "1.234")!,
-                                              merchantReferenceId: "ORDER-4471")
+                                              merchantReference: "ORDER-4471")
 
         lock.lock(); let seen = lines; lock.unlock()
         XCTAssertTrue(seen.contains { $0.contains("Sending SALE ORDER-4471") }, "\(seen)")
@@ -349,7 +350,7 @@ final class SignedExchangeTests: XCTestCase {
                 "responseCode": "00",
                 "responseMessage": "Transaction found",
                 "approved": true,
-                "merchantReferenceId": request["merchantReferenceId"] ?? "",
+                "merchantReference": request["merchantReference"] ?? "",
                 "nonce": request["nonce"] ?? "",
                 "ecrResponse": [
                     "success": true,
@@ -366,7 +367,7 @@ final class SignedExchangeTests: XCTestCase {
         }
 
         let result = try terminal().sale(amount: Decimal(string: "1.234")!,
-                                         merchantReferenceId: "ORDER-4471")
+                                         merchantReference: "ORDER-4471")
 
         XCTAssertEqual(2, server.requests.count, "the sale, then one inquiry")
 
@@ -395,7 +396,7 @@ final class SignedExchangeTests: XCTestCase {
 
         let result = try terminal(autoInquire: false).sale(
             amount: Decimal(string: "1.234")!,
-            merchantReferenceId: "ORDER-4471"
+            merchantReference: "ORDER-4471"
         )
 
         XCTAssertEqual(1, server.requests.count, "the sale, and nothing else")
@@ -411,7 +412,7 @@ final class SignedExchangeTests: XCTestCase {
         }
 
         _ = try terminal().sale(amount: Decimal(string: "1.234")!,
-                                merchantReferenceId: "ORDER-4471")
+                                merchantReference: "ORDER-4471")
 
         let sales = server.requests.filter { $0["messageType"] as? String == "SALE" }
         XCTAssertEqual(1, sales.count)

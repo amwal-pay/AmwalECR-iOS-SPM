@@ -16,6 +16,10 @@ enum SecureHash {
     /// Field carrying the signature. Never part of what is signed.
     static let field = "secureHash"
 
+    /// Log label for the Wi‑Fi/LAN signing key (distinct from Web Service).
+    /// The secret itself is supplied by the app on ``EcrConfig.secureHashKey``.
+    static let keyLabel = "Wi-Fi/LAN secure hash key"
+
     private static let nonceBytes = 16
 
     /// 64 bits is the shortest key worth calling a secret.
@@ -142,8 +146,7 @@ enum SecureHash {
     private static func decodeKey(_ key: String) throws -> [UInt8] {
         guard key.count >= 2, key.count % 2 == 0, key.allSatisfy(\.isHexDigit) else {
             throw EcrInvalidArgument(
-                "The ECR secret must be an even-length hex string, e.g. "
-                    + "\"881dc200c9833da726e9376c2e32cff7\""
+                "The ECR secret must be an even-length hex string"
             )
         }
 
