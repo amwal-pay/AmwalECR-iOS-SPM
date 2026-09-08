@@ -160,8 +160,25 @@ let secret = settings.secureHashKey(for: selectedMode)
 
 var config = EcrConfig()
 config.secureHashKey = secret
-let terminal = EcrTerminal(host: host, serialNumber: serial, config: config)
+
+let plan = EcrSessions.plan(
+    link: .lan(host: host, port: config.port),
+    config: config
+)
+guard plan.isReady else {
+    screen.show(plan.issues.joined(separator: "\n"))
+    return
+}
+let session = EcrSessions.open(terminalSerial: serial, plan: plan)
+_ = try session.sale(amount: amount)
 ```
+
+Prefer **`EcrSessions.open`** so sale, inquiry, and recovery share one transport
+dispatch (LAN / USB cable / Web Service). You can still construct `EcrTerminal`
+or `EcrWebServiceTerminal` directly when you already know the link.
+
+Web Service Hub bases: SIT `https://test.amwalpg.com:25452`, UAT
+`https://test.amwalpg.com:15452`, PROD `https://pos.amwalpg.com`.
 
 Every request is then signed — HMAC-SHA256 over the sorted top-level fields, with
 a per-message nonce — and every answer is checked, both that it carries this

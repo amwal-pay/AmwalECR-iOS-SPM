@@ -41,6 +41,8 @@ accepted when reading.
   **`EcrSessions.usbCableTerminal(…)`**.
 - **`EcrTerminal` channel initialiser** — host-based init remains and builds a
   `TcpEcrChannel`.
+- **`EcrOpenedSession`** and **`EcrSessions.open`** — one dispatch for LAN /
+  USB cable / Web Service so sale, inquiry, and recovery share the same client.
 - Unit-test placeholders aligned with `ecr_sdk`: `SECURE_HASH_KEY_ECR_WIFI`,
   `SECURE_HASH_KEY_ECR_WIFI_OTHER`, `SECURE_HASH_KEY_WEBSERVICE` on
   `EcrTestConfigs` (`lan` / `lanOther` / `webService`).
@@ -54,4 +56,11 @@ accepted when reading.
   (`success`, `data`, `errorList`, nested `ecrResponse`), matching Android
   `EcrWireReaders.kt`. Inquiry found/not-found is determined by `data` presence,
   not the outer `success`/`approved` flag.
-- Settled amounts prefer `authorizeAmount` when greater than zero.
+- **Partial inquiry amounts:** `amount` is the requested amount;
+  `authorizedAmount` is the settled (`authorizeAmount`) value.
+- **Web Service Hub hosts** are distinct per environment (SIT `:25452`,
+  UAT `:15452`, PROD `pos.amwalpg.com`).
+- **Diagnostics** never log hex slices of signing secrets — only
+  `configured` / `not configured`.
+- Settled money-moving amounts still prefer `authorizeAmount` when greater than
+  zero.

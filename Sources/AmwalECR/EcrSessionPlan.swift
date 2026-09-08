@@ -98,6 +98,62 @@ public enum EcrSessions {
         )
     }
 
+    /// Opens the transport that `plan` describes.
+    ///
+    /// One dispatch for LAN / USB cable / Web Service so callers (and recovery
+    /// paths) cannot diverge on which client they build.
+    ///
+    /// - Parameter usbChannel: required when `plan.usesUsbCable`; ignored otherwise.
+    public static func open(
+        terminalSerial: String,
+        plan: EcrSessionPlan,
+        usbChannel: (() -> EcrChannel)? = nil,
+        logger: EcrLogger = .none
+    ) -> EcrOpenedSession {
+        precondition(
+            plan.isReady,
+            "Cannot open a session with unresolved issues: \(plan.issues.joined(separator: "; "))"
+        )
+        if plan.usesUsbCable {
+            guard let makeChannel = usbChannel else {
+                preconditionFailure("USB cable sessions require a channel factory")
+            }
+            return EcrOpenedSession(
+                plan: plan,
+                local: usbCableTerminal(
+                    terminalSerial: terminalSerial,
+                    plan: plan,
+                    channel: makeChannel(),
+                    logger: logger
+                ),
+                web: nil
+            )
+        }
+        if plan.usesLan {
+            return EcrOpenedSession(
+                plan: plan,
+                local: lanTerminal(
+                    terminalSerial: terminalSerial,
+                    plan: plan,
+                    logger: logger
+                ),
+                web: nil
+            )
+        }
+        if plan.usesWebService {
+            return EcrOpenedSession(
+                plan: plan,
+                local: nil,
+                web: webServiceTerminal(
+                    terminalSerial: terminalSerial,
+                    plan: plan,
+                    logger: logger
+                )
+            )
+        }
+        preconditionFailure("Unsupported ECR link")
+    }
+
     public static func lanTerminal(
         terminalSerial: String,
         plan: EcrSessionPlan,

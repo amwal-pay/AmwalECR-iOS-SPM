@@ -256,6 +256,7 @@ final class EcrResponseReaderTests: XCTestCase {
             return XCTFail("expected found")
         }
         XCTAssertTrue(transaction.partialApproval)
+        XCTAssertEqual("0.258", transaction.amount)
         XCTAssertEqual("0.100", transaction.authorizedAmount)
     }
 

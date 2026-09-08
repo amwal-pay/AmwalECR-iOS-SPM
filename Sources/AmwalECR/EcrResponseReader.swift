@@ -112,8 +112,21 @@ extension EcrTerminal {
                 type: typeDisplay.isEmpty ? ecrString(data, "transactionType") : typeDisplay,
                 status: status.isEmpty ? (envelope.success ? "Approved" : "Declined") : status,
                 partialApproval: ecrFlag(data, "isPartialApprove"),
-                authorizedAmount: ecrString(data, "authorizeAmount"),
-                amount: settledAmountMajor(data: data, minorUnitDigits: minorUnitDigits, root: json),
+                // Contract: amount is requested; authorizedAmount is settled.
+                authorizedAmount: {
+                    let authorized = ecrString(data, "authorizeAmount")
+                    return authorized.isEmpty ? ecrString(data, "amount") : authorized
+                }(),
+                amount: {
+                    let requested = ecrString(data, "amount")
+                    return requested.isEmpty
+                        ? settledAmountMajor(
+                            data: data,
+                            minorUnitDigits: minorUnitDigits,
+                            root: json
+                        )
+                        : requested
+                }(),
                 totalAmount: ecrString(data, "totalAmount"),
                 currency: {
                     let currency = ecrString(data, "currency")

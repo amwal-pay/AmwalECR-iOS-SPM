@@ -23,9 +23,9 @@ enum EcrTestConfigs {
     static let lanOther = EcrConfig(secureHashKey: SECURE_HASH_KEY_ECR_WIFI_OTHER)
 
     static let webService = EcrConfig(
+        secureHashKey: SECURE_HASH_KEY_WEBSERVICE,
         merchantId: "13593",
         terminalId: "742001",
-        environment: .uat,
-        secureHashKey: SECURE_HASH_KEY_WEBSERVICE
+        environment: .uat
     )
 }

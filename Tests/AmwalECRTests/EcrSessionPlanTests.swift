@@ -83,6 +83,43 @@ final class EcrSessionPlanTests: XCTestCase {
         XCTAssertTrue(plan.issues.contains("Merchant ID must be numeric"))
     }
 
+    func testOpenDispatchesLanWithoutUsbChannel() {
+        let plan = EcrSessions.plan(
+            link: .lan(host: "127.0.0.1", port: 9100),
+            config: lanConfig
+        )
+        let session = EcrSessions.open(terminalSerial: "SN1", plan: plan)
+        XCTAssertTrue(session.usesLocalTerminal)
+        XCTAssertFalse(session.usesWebService)
+        XCTAssertTrue(session.supportsReceipt)
+    }
+
+    func testOpenDispatchesWebService() {
+        let plan = EcrSessions.plan(
+            link: .webService(merchantId: "13593", terminalId: "742001"),
+            config: EcrTestConfigs.webService
+        )
+        let session = EcrSessions.open(terminalSerial: "SN1", plan: plan)
+        XCTAssertTrue(session.usesWebService)
+        XCTAssertFalse(session.usesLocalTerminal)
+        XCTAssertFalse(session.supportsReceipt)
+        XCTAssertNil(session.probeReachability())
+    }
+
+    func testOpenUsbWithChannelFactory() {
+        let plan = EcrSessions.plan(link: .usbCable, config: lanConfig)
+        XCTAssertTrue(plan.isReady)
+        let channel = FakeEcrChannel()
+        let session = EcrSessions.open(
+            terminalSerial: "SN1",
+            plan: plan,
+            usbChannel: { channel }
+        )
+        XCTAssertTrue(session.usesLocalTerminal)
+        XCTAssertTrue(session.supportsReceipt)
+        XCTAssertEqual("USB cable", session.probeReachability()?.endpoint)
+    }
+
     func testMenuOptionsMatchAndroid() {
         XCTAssertEqual(
             [EcrTransactionType.sale, .void, .refund, .inquiry],
