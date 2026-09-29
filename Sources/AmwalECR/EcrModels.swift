@@ -84,6 +84,8 @@ public enum EcrTransactionType: String {
     case refund = "REFUND"
     case inquiry = "INQUIRY"
     case receipt = "RECEIPT"
+    case signOn = "SIGN_ON"
+    case closeReceipt = "CLOSE_RECEIPT"
 
     /// The value carried in the message's `messageType` field.
     public var messageType: String { rawValue }
@@ -95,6 +97,8 @@ public enum EcrTransactionType: String {
         case .refund: return "Refund"
         case .inquiry: return "Inquiry"
         case .receipt: return "Receipt"
+        case .signOn: return "Sign-on"
+        case .closeReceipt: return "Close receipt"
         }
     }
 
@@ -103,7 +107,9 @@ public enum EcrTransactionType: String {
     public static let menuOptions: [EcrTransactionType] = [.sale, .void, .refund, .inquiry]
 
     public var requiresAmount: Bool { self == .sale || self == .refund }
-    public var requiresOriginalStan: Bool { self != .sale }
+    public var requiresOriginalStan: Bool {
+        self == .void || self == .refund || self == .inquiry || self == .receipt
+    }
     public var requiresOriginalDate: Bool {
         self == .refund || self == .inquiry || self == .receipt
     }
@@ -190,19 +196,24 @@ public struct EcrDeclined {
     public let reason: String
     public let nextStep: EcrNextStep
     public let raw: String
+    /// The terminal's current profile when this refusal was about the
+    /// configuration. Nil on an ordinary decline.
+    public let capabilities: EcrTerminalCapabilities?
 
     public init(
         merchantReference: String,
         responseCode: String,
         reason: String,
         nextStep: EcrNextStep = .none,
-        raw: String
+        raw: String,
+        capabilities: EcrTerminalCapabilities? = nil
     ) {
         self.merchantReference = merchantReference
         self.responseCode = responseCode
         self.reason = reason
         self.nextStep = nextStep
         self.raw = raw
+        self.capabilities = capabilities
     }
 }
 
@@ -330,6 +341,22 @@ public enum EcrReceipt {
         switch self {
         case let .ready(reference, _, _),
              let .unavailable(reference, _, _),
+             let .failed(reference, _):
+            return reference
+        }
+    }
+}
+
+/// What came of asking the terminal to put its receipt away.
+public enum EcrReceiptClosed {
+    case idle(merchantReference: String, raw: String)
+    case refused(merchantReference: String, responseCode: String, reason: String, raw: String)
+    case failed(merchantReference: String, failure: EcrFailure)
+
+    public var merchantReference: String {
+        switch self {
+        case let .idle(reference, _),
+             let .refused(reference, _, _, _),
              let .failed(reference, _):
             return reference
         }

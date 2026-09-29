@@ -31,7 +31,7 @@ enum EcrWebServiceOperation {
         case .void: return .void
         case .refund: return .refund
         case .inquiry: return .transactionStatus
-        case .receipt: return nil
+        case .receipt, .signOn, .closeReceipt: return nil
         }
     }
 }

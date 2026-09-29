@@ -200,6 +200,39 @@ public final class EcrTerminal {
         return inquiryAnswer(message)
     }
 
+    /// Asks the terminal what it is and what it will accept.
+    ///
+    /// Reads only. No card is presented and no money moves.
+    public func signOn(merchantReference: String = "") throws -> EcrSignOn {
+        let message = try build(.signOn, merchantReference: merchantReference)
+        switch exchange(message) {
+        case let .failure(failure):
+            return .failed(merchantReference: message.merchantReference, failure: failure)
+        case let .success(json):
+            return EcrTerminal.signOn(
+                from: json,
+                merchantReference: message.merchantReference
+            )
+        }
+    }
+
+    /// Asks the terminal to put its receipt away and return to its idle screen.
+    ///
+    /// Moves no money. Safe to repeat: a terminal that is already idle answers
+    /// the same way.
+    public func closeReceipt(merchantReference: String = "") throws -> EcrReceiptClosed {
+        let message = try build(.closeReceipt, merchantReference: merchantReference)
+        switch exchange(message) {
+        case let .failure(failure):
+            return .failed(merchantReference: message.merchantReference, failure: failure)
+        case let .success(json):
+            return EcrTerminal.receiptClosed(
+                from: json,
+                merchantReference: message.merchantReference
+            )
+        }
+    }
+
     public func receipt(
         receiptNumber: String,
         transactionDate: String,

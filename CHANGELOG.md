@@ -5,6 +5,17 @@ the addition described in
 [the release policy](https://github.com/amwal-pay/amwal-ecr-flutter/blob/main/doc/release-policy.md): any change to
 what an outcome *means* is breaking, however small the diff.
 
+## 0.2.2
+
+Sign-on on local links, matching Android `EcrTerminal.signOn`.
+
+### Added
+
+- **`EcrTerminal.signOn`** and **`EcrOpenedSession.signOn`**. Wi-Fi and a caller-supplied USB cable channel send `SIGN_ON`. A Web Service session answers unavailable and sends nothing.
+- **`EcrSignOn`**, **`EcrTerminalCapabilities`**, **`EcrPermittedTransaction`**, and **`EcrTerminalTransport`**.
+- **`EcrDeclined.capabilities`** when a refusal carries `profileChanged`, so a till can update what the terminal permits without signing on again.
+- **`EcrTerminal.closeReceipt`** and **`EcrOpenedSession.closeReceipt`**. Wi-Fi and a caller-supplied USB cable channel send `CLOSE_RECEIPT`. A Web Service session answers refused and sends nothing.
+
 ## 0.2.1
 
 Brings the iOS SDK to parity with Android `ecr-sdk` for Web Service ECR, USB

@@ -91,8 +91,18 @@ workflows:
       - name: The tag names the version in the CHANGELOG
         script: |
           set -euo pipefail
+          # CM_TAG is set only for tag *webhooks*. A manual rebuild of a tagged
+          # commit (CM_TRIGGER_SOURCE=api) leaves it empty — recover from git.
           tag="${CM_TAG:-}"
-          [[ -n "$tag" ]] || { echo "Not a tag build (CM_TAG is empty)"; exit 1; }
+          if [[ -z "$tag" ]]; then
+            tag="$(git describe --exact-match --tags HEAD 2>/dev/null || true)"
+          fi
+          if [[ -z "$tag" ]]; then
+            echo "Not a tag build (CM_TAG is empty and HEAD is not an exact tag)." >&2
+            echo "spm-release only validates a vX.Y.Z tag." >&2
+            echo "Push a tag (git push origin vX.Y.Z) or re-run after a tag webhook — do not start this workflow on a branch." >&2
+            exit 1
+          fi
           version="${tag#v}"
           changelog_version="$(grep -m1 -E '^## [0-9]+\.[0-9]+\.[0-9]+' CHANGELOG.md | sed -E 's/^## ([0-9]+\.[0-9]+\.[0-9]+).*/\1/')"
           echo "tag=$tag  changelog=$changelog_version"

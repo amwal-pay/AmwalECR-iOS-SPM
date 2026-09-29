@@ -54,6 +54,10 @@ enum EcrWebServiceMessage {
             body["originalTransactionDate"] = originalTransactionDate
         case .receipt:
             throw EcrInvalidArgument("Receipt is not a Web Service operation")
+        case .signOn:
+            throw EcrInvalidArgument("Sign-on is not a Web Service operation")
+        case .closeReceipt:
+            throw EcrInvalidArgument("Closing the receipt is not a Web Service operation")
         }
 
         let json: [String: Any]

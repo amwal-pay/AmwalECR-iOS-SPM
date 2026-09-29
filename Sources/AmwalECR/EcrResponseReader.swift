@@ -23,7 +23,8 @@ extension EcrTerminal {
                     responseCode: envelope.responseCode,
                     reason: envelope.displayMessage.isEmpty ? "Declined" : envelope.displayMessage,
                     nextStep: EcrNextStep.of(ecrString(json, "nextStep")),
-                    raw: EcrMessageCodec.text(json)
+                    raw: EcrMessageCodec.text(json),
+                    capabilities: refusedCapabilities(json)
                 )
             )
         }
@@ -171,6 +172,93 @@ extension EcrTerminal {
             merchantReference: resolvedReference,
             url: url,
             raw: EcrMessageCodec.text(json)
+        )
+    }
+
+    static func signOn(from json: [String: Any], merchantReference: String) -> EcrSignOn {
+        let envelope = EcrResponseEnvelope.parse(json)
+        let resolvedReference = envelope.merchantReference.isEmpty
+            ? merchantReference
+            : envelope.merchantReference
+        let what = capabilities(from: envelope.data)
+        let raw = EcrMessageCodec.text(json)
+
+        guard what.available else {
+            let reason = what.reason.isEmpty
+                ? (envelope.displayMessage.isEmpty
+                    ? "The terminal is not available"
+                    : envelope.displayMessage)
+                : what.reason
+            return .unavailable(
+                merchantReference: resolvedReference,
+                reason: reason,
+                capabilities: what,
+                raw: raw
+            )
+        }
+
+        return .available(
+            merchantReference: resolvedReference,
+            capabilities: what,
+            raw: raw
+        )
+    }
+
+    static func receiptClosed(from json: [String: Any], merchantReference: String) -> EcrReceiptClosed {
+        let envelope = EcrResponseEnvelope.parse(json)
+        let resolvedReference = envelope.merchantReference.isEmpty
+            ? merchantReference
+            : envelope.merchantReference
+        let raw = EcrMessageCodec.text(json)
+
+        guard envelope.success else {
+            return .refused(
+                merchantReference: resolvedReference,
+                responseCode: envelope.responseCode,
+                reason: envelope.displayMessage.isEmpty
+                    ? "The terminal refused to close its receipt"
+                    : envelope.displayMessage,
+                raw: raw
+            )
+        }
+
+        return .idle(merchantReference: resolvedReference, raw: raw)
+    }
+
+    /// The profile a decline was refused against, or nil when the decline was
+    /// about the transaction rather than the configuration.
+    static func refusedCapabilities(_ json: [String: Any]) -> EcrTerminalCapabilities? {
+        guard let data = EcrResponseEnvelope.parse(json).data else { return nil }
+        guard ecrFlag(data, "profileChanged") else { return nil }
+        return capabilities(from: data)
+    }
+
+    static func capabilities(from data: [String: Any]?) -> EcrTerminalCapabilities {
+        guard let data else { return EcrTerminalCapabilities() }
+
+        let permitted = (data["permittedTransactions"] as? [Any] ?? []).compactMap { element -> EcrPermittedTransaction? in
+            guard let entry = element as? [String: Any] else { return nil }
+            guard let type = EcrTransactionType(rawValue: ecrString(entry, "messageType")) else {
+                return nil
+            }
+            return EcrPermittedTransaction(
+                type: type,
+                minAmount: ecrString(entry, "minAmount"),
+                maxAmount: ecrString(entry, "maxAmount")
+            )
+        }
+
+        let modeText = ecrString(data, "ecrMode")
+        return EcrTerminalCapabilities(
+            available: ecrFlag(data, "available"),
+            reason: ecrString(data, "reason"),
+            transport: EcrTerminalTransport.fromMode(Int(modeText)),
+            terminalName: ecrString(data, "terminalName"),
+            currencyCode: ecrString(data, "currencyCode"),
+            minorUnitDigits: Int(ecrString(data, "minorUnitDigits")) ?? 0,
+            eReceipt: ecrFlag(data, "eReceipt"),
+            physicalReceipt: ecrFlag(data, "physicalReceipt"),
+            permitted: permitted
         )
     }
 

@@ -22,6 +22,9 @@ public final class EcrOpenedSession {
     /// Receipt URLs exist only on the local (LAN / USB) protocol.
     public var supportsReceipt: Bool { local != nil }
 
+    /// Whether this session can ask the terminal to describe itself.
+    public var supportsSignOn: Bool { local != nil }
+
     /// Reachability for local links, or `nil` when Web Service — Hub HTTPS has
     /// no pre-flight probe equivalent.
     public func probeReachability() -> EcrReachability? {
@@ -153,6 +156,38 @@ public final class EcrOpenedSession {
             originalTerminalId: originalTerminalId,
             merchantReference: merchantReference
         )
+    }
+
+    /// Asks the terminal what it is and what it will accept.
+    ///
+    /// Local links only. A Web Service session answers unavailable and sends
+    /// nothing: the till already named that terminal when it opened the session.
+    public func signOn(merchantReference: String = "") throws -> EcrSignOn {
+        guard let local else {
+            return .unavailable(
+                merchantReference: merchantReference,
+                reason: "Sign-on is only supported over Wi‑Fi and USB cable ECR",
+                capabilities: EcrTerminalCapabilities(),
+                raw: ""
+            )
+        }
+        return try local.signOn(merchantReference: merchantReference)
+    }
+
+    /// Asks the terminal to put its receipt away and return to idle.
+    ///
+    /// Local links only. A Web Service session answers refused and sends
+    /// nothing: the terminal is not on the till's counter.
+    public func closeReceipt(merchantReference: String = "") throws -> EcrReceiptClosed {
+        guard let local else {
+            return .refused(
+                merchantReference: merchantReference,
+                responseCode: "",
+                reason: "Closing the receipt is only supported over Wi‑Fi and USB cable ECR",
+                raw: ""
+            )
+        }
+        return try local.closeReceipt(merchantReference: merchantReference)
     }
 
     public func cancel() {
