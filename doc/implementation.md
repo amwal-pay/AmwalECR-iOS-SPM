@@ -55,8 +55,8 @@ let session = EcrSessions.open(
 ```
 
 `EcrConfig.secureHashKeyError` says whether a key is usable before you send
-anything; a key that is not throws `EcrInvalidArgument` at the first call rather
-than being sent unsigned.
+anything. A key that is not is rejected rather than sent unsigned:
+`EcrInvalidArgument` on Wi‑Fi / USB cable, `.malformed` failure on Web Service.
 
 Web Service Hub bases: SIT `https://test.amwalpg.com:25452`, UAT
 `https://test.amwalpg.com:15452`, PROD `https://pos.amwalpg.com`.
@@ -88,6 +88,16 @@ case let .failed(_, failure):
 }
 ```
 
+| `EcrSignOn` | Meaning |
+|---|---|
+| `.available` | Profile and permits are usable |
+| `.unavailable` | Terminal said no, or Web Service (nothing sent) |
+| `.failed` | Link broke before a readable answer |
+
+`supportsSignOn` and `supportsReceipt` are `true` on Wi‑Fi and USB cable
+(`usesLocalTerminal`). Close-receipt uses that same local gate
+(`usesLocalTerminal`); there is no `supportsCloseReceipt` property.
+
 A later decline can carry `EcrDeclined.capabilities` when the refusal includes
 `profileChanged`, so the till can refresh what is permitted without signing on
 again.
@@ -103,17 +113,20 @@ DispatchQueue.global(qos: .userInitiated).async {
     }
 }
 
-// The operator gave up. This stops the wait — it does not stop the terminal,
-// and the outcome is unknown.
+// The operator gave up. This stops the wait on a LAN TCP socket — it does not
+// stop the terminal, and the outcome is unknown. Web Service and a
+// caller-supplied USB channel are unaffected.
 session.cancel()
 ```
 
-Every request is signed — HMAC-SHA256 over the sorted top-level fields, with a
-per-message nonce — and every answer is checked, both that it carries this
-till's signature and that it echoes *this* request's nonce. An answer failing
-either check is `.unauthenticated`: something else may have replied on the
-terminal's port, so the answer is discarded rather than believed. It is not a
-decline, and the transaction may well have completed.
+On Wi‑Fi and USB cable, every request is signed — HMAC-SHA256 over the sorted
+top-level fields (field `secureHash`), with a per-message nonce — and every
+answer is checked, both that it carries this till's signature and that it echoes
+*this* request's nonce. An answer failing either check is `.unauthenticated`:
+something else may have replied on the terminal's port, so the answer is
+discarded rather than believed. It is not a decline, and the transaction may
+well have completed. Web Service signs the JSON body instead (HMAC-SHA256 under
+the Web Service secret, field `secureHashValue`) and has no per-request nonce.
 
 **Every call blocks** while the terminal works, which for a sale is as long as
 the cardholder takes. Run them off the main thread.
@@ -121,15 +134,31 @@ the cardholder takes. Run them off the main thread.
 ### 4. Close the receipt (local links)
 
 When the result UI is dismissed, ask the terminal to put its paper/e-receipt
-away and return to idle. Moves no money; safe to repeat. Wi‑Fi and USB cable
-send `CLOSE_RECEIPT`. Web Service answers `.refused` and sends nothing.
+away and return to idle. Moves no money; safe to repeat — an already-idle
+terminal answers `.idle` the same way. Wi‑Fi and USB cable send `CLOSE_RECEIPT`.
+Web Service answers `.refused` and sends nothing (the terminal is not on the
+till's counter). A terminal too old to know the request also answers `.refused`;
+treat that as "cannot be asked" and carry on.
 
 ```swift
 func resultDialogDidDismiss() {
-    guard session.supportsSignOn else { return }  // same local-only gate
-    _ = try? session.closeReceipt()
+    guard session.usesLocalTerminal else { return }
+    switch try? session.closeReceipt() {
+    case .idle, .none:
+        break
+    case let .refused(_, _, reason, _):
+        screen.log(reason)                   // unsupported or terminal refused
+    case let .failed(_, failure):
+        screen.log(failure.message)          // link broke; safe to ask again
+    }
 }
 ```
+
+| `EcrReceiptClosed` | Meaning |
+|---|---|
+| `.idle` | Receipt dismissed / terminal already idle |
+| `.refused` | Terminal said no, or Web Service (nothing sent) |
+| `.failed` | Link broke before a readable answer |
 
 ---
 
@@ -137,15 +166,31 @@ func resultDialogDidDismiss() {
 
 | | Method | Needs |
 |---|---|---|
-| Reachability | `probeReachability()` / `isReachable()` | local links |
-| Sign-on | `signOn(merchantReference:)` | Wi‑Fi or USB cable |
-| Sale | `sale(amount:merchantReference:)` | amount |
-| Void | `void(receiptNumber:originalTerminalId:merchantReference:)` | the original's receipt number |
-| Refund | `refund(amount:receiptNumber:transactionDate:originalTerminalId:merchantReference:)` | amount, receipt number, date |
-| Inquiry | `inquire(receiptNumber:transactionDate:originalTerminalId:merchantReference:)` | receipt number, date |
-| Inquiry by reference | `inquireByReference(_:transactionDate:originalTerminalId:merchantReference:)` | the original's reference |
-| Close receipt | `closeReceipt(merchantReference:)` | Wi‑Fi or USB cable |
-| E-receipt | `receipt(receiptNumber:transactionDate:originalTerminalId:merchantReference:)` | receipt number, date (local links) |
+| Reachability | `probeReachability()` → `EcrReachability?` on the session; `isReachable()` / `probeReachability()` → `EcrReachability` on `EcrTerminal` | Wi‑Fi / USB; Web Service session returns `nil` |
+| Sign-on | `signOn(merchantReference:)` → `EcrSignOn` | Wi‑Fi or USB cable (`supportsSignOn`) |
+| Sale | `sale(amount:merchantReference:)` → `EcrResult` | amount |
+| Void | `void(receiptNumber:originalTerminalId:merchantReference:)` → `EcrResult` | the original's receipt number |
+| Refund | `refund(amount:receiptNumber:transactionDate:originalTerminalId:merchantReference:)` → `EcrResult` | amount, receipt number, date |
+| Inquiry | `inquire(receiptNumber:transactionDate:originalTerminalId:merchantReference:)` → `EcrInquiry` | receipt number, date |
+| Inquiry by reference | `inquireByReference(_:transactionDate:originalTerminalId:merchantReference:)` → `EcrInquiry` | the original's reference |
+| Close receipt | `closeReceipt(merchantReference:)` → `EcrReceiptClosed` | Wi‑Fi or USB cable (`usesLocalTerminal`) |
+| E-receipt | `receipt(receiptNumber:transactionDate:originalTerminalId:merchantReference:)` → `EcrReceipt` | receipt number, date (`supportsReceipt`) |
+
+On `EcrTerminal` only, sale / void / refund also share `run(_:amount:originalStan:originalTerminalId:originalDate:merchantReference:)`. Inquiry, receipt, sign-on, and close-receipt are dedicated methods — passing them to `run` traps. `EcrOpenedSession` exposes the dedicated methods only.
+
+### What each transport supports
+
+| | Wi‑Fi | USB cable | Web Service |
+|---|---|---|---|
+| Sale / void / refund / inquiry | ✔ | ✔ | ✔ |
+| Sign-on | ✔ | ✔ | `.unavailable` — nothing sent |
+| Close receipt | ✔ | ✔ | `.refused` — nothing sent |
+| E-receipt URL | ✔ | ✔ | `.unavailable` — nothing sent |
+| `probeReachability` | ✔ | ✔ | `nil` |
+| `cancel` | stops LAN TCP wait | no-op unless the channel is `TcpEcrChannel` | no-op |
+
+USB cable has no built-in hardware driver in this package — you supply an
+`EcrChannel`. Framing, signing, and messages match Wi‑Fi.
 
 Both inquiries read and change nothing, so they are safe to repeat, and the
 terminal answers them even while it is taking a payment — which is exactly when a
@@ -158,10 +203,12 @@ outcome, and it is the only identifier a till holds *before* the terminal
 answers — which is what makes `inquireByReference` the lookup that still works
 when nothing else does.
 
-The money-moving calls `throw` only for arguments that cannot be used: a
-reference over 32 characters or carrying a space, `&` or `=`; a secret that is
-not hex. Nothing is sent in that case. Everything that happens on the wire is an
-`EcrResult` (or `EcrSignOn` / `EcrReceiptClosed`), never an exception for a
-terminal refusal.
+On Wi‑Fi and USB cable, arguments that cannot be used — a reference over 32
+characters or carrying a space, `&` or `=`; a secret that is not hex — throw
+`EcrInvalidArgument` and nothing is sent. Over Web Service those same mistakes
+come back as `.failed(…, .malformed, …)` (or inquiry `.failed`) without
+throwing. Everything that happens on the wire after a request is sent is an
+`EcrResult` (or `EcrSignOn` / `EcrReceiptClosed` / `EcrReceipt` / `EcrInquiry`),
+never an exception for a terminal refusal.
 
 ---

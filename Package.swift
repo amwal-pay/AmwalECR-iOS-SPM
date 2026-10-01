@@ -20,7 +20,7 @@ let package = Package(
         .macOS(.v12),
     ],
     products: [
-        .library(name: "AmwalECR", targets: ["AmwalECR"]),
+        .library(name: "AmwalECR", targets: ["AmwalECR"])
     ],
     targets: [
         // Foundation and Darwin only: no third-party dependency, and nothing

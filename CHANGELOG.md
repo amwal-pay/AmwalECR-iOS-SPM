@@ -5,16 +5,46 @@ the addition described in
 [the release policy](https://github.com/amwal-pay/amwal-ecr-flutter/blob/main/doc/release-policy.md): any change to
 what an outcome *means* is breaking, however small the diff.
 
+## 0.2.3
+
+Documentation only — no API or wire changes. Tag `v0.2.3` to publish (SwiftPM
+resolves from tags).
+
+### Changed
+
+- **README** and **`doc/implementation.md`** now match the current surface:
+  Wi‑Fi / USB cable / Web Service; sign-on and close-receipt outcomes; the
+  transport support matrix; LAN HMAC vs Web Service body signing; `cancel` and
+  `probeReachability` per transport.
+- Platform floor remains **iOS 12.0+** (CocoaPods pod targets iOS 17.0+).
+
 ## 0.2.2
 
-Sign-on on local links, matching Android `EcrTerminal.signOn`.
+Sign-on and close-receipt on local links, matching Android `EcrTerminal.signOn`
+and `EcrTerminal.closeReceipt`.
 
 ### Added
 
-- **`EcrTerminal.signOn`** and **`EcrOpenedSession.signOn`**. Wi-Fi and a caller-supplied USB cable channel send `SIGN_ON`. A Web Service session answers unavailable and sends nothing.
-- **`EcrSignOn`**, **`EcrTerminalCapabilities`**, **`EcrPermittedTransaction`**, and **`EcrTerminalTransport`**.
-- **`EcrDeclined.capabilities`** when a refusal carries `profileChanged`, so a till can update what the terminal permits without signing on again.
-- **`EcrTerminal.closeReceipt`** and **`EcrOpenedSession.closeReceipt`**. Wi-Fi and a caller-supplied USB cable channel send `CLOSE_RECEIPT`. A Web Service session answers refused and sends nothing.
+- **`EcrTerminal.signOn`** and **`EcrOpenedSession.signOn`**. Wi‑Fi and a
+  caller-supplied USB cable channel send `SIGN_ON`. A Web Service session
+  answers `.unavailable` and sends nothing.
+- **`EcrSignOn`** (`.available` / `.unavailable` / `.failed`),
+  **`EcrTerminalCapabilities`**, **`EcrPermittedTransaction`**, and
+  **`EcrTerminalTransport`**.
+- **`EcrOpenedSession.supportsSignOn`** — `true` on Wi‑Fi and USB cable
+  (`usesLocalTerminal`); the same local gate covers close-receipt (no separate
+  flag).
+- **`EcrDeclined.capabilities`** when a refusal carries `profileChanged`, so a
+  till can update what the terminal permits without signing on again.
+- **`EcrTerminal.closeReceipt`** and **`EcrOpenedSession.closeReceipt`**.
+  Wi‑Fi and a caller-supplied USB cable channel send `CLOSE_RECEIPT`. A Web
+  Service session answers `.refused` and sends nothing.
+- **`EcrReceiptClosed`** (`.idle` / `.refused` / `.failed`). An already-idle
+  terminal answers `.idle`; a terminal that will not (or cannot) close answers
+  `.refused`.
+- **`EcrTransactionType.signOn`** (`SIGN_ON`) and
+  **`EcrTransactionType.closeReceipt`** (`CLOSE_RECEIPT`) — not in
+  `menuOptions`; run via `signOn` / `closeReceipt`, not `run`.
 
 ## 0.2.1
 
