@@ -60,13 +60,13 @@ method and outcome for outcome. Both are used, unchanged, by the Flutter plugin
 
 In Xcode: **File ▸ Add Package Dependencies…**, then
 `https://github.com/amwal-pay/AmwalECR-iOS-SPM.git`, *Up to Next Minor
-Version* from `0.2.3`.
+Version* from `0.3.0`.
 
 Or in a `Package.swift`:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/amwal-pay/AmwalECR-iOS-SPM.git", .upToNextMinor(from: "0.2.3")),
+    .package(url: "https://github.com/amwal-pay/AmwalECR-iOS-SPM.git", .upToNextMinor(from: "0.3.0")),
 ],
 targets: [
     .target(name: "Till", dependencies: [.product(name: "AmwalECR", package: "AmwalECR-iOS-SPM")]),
@@ -171,7 +171,7 @@ var config = EcrConfig(
     minorUnitDigits: 3,       // baisa
     port: 9100,
     connectTimeout: 10,
-    responseTimeout: 120,     // cardholder time, not network time
+    responseTimeout: 120,     // LAN default; Web Service plan bumps to 130s
     probeTimeout: 3
 )
 config.secureHashKey = secret
@@ -204,8 +204,25 @@ let session = EcrSessions.open(
 anything. A key that is not is rejected rather than sent unsigned:
 `EcrInvalidArgument` on Wi‑Fi / USB cable, `.malformed` failure on Web Service.
 
-Web Service Hub bases: SIT `https://test.amwalpg.com:25452`, UAT
-`https://test.amwalpg.com:15452`, PROD `https://pos.amwalpg.com`.
+Web Service Hub hosts are resolved internally from `EcrConfig.environment`
+(SIT / UAT / PROD) and are not published in customer docs.
+
+Web Service inquiry by reference works: `inquireByReference` sends the original's
+reference as `originalMerchantReference` with an empty `stan`. If the Hub cannot
+be reached (no response, empty/invalid body, HTTP 5xx) an inquiry answers
+`.failed(…, .connectionLost, …)` — never `.notFound` — so a till does not charge
+again on a lookup that never completed.
+
+A sale / void / refund answer with `nextStep: INQUIRE_BY_MERCHANT_REFERENCE`
+(typically `NO_RESPONSE`) is `.failed(.timeout)` / `.failed(.connectionLost)`,
+not `.declined` — inquire by reference; do not retry the sale.
+
+Web Service default read timeout is **130s**
+(`EcrConfig.webServiceResponseTimeout`). `EcrSessions.plan` applies it when the
+config still has the LAN default of 120s; an explicit override is kept.
+
+App-to-app `PRINT` (receipt image hand-over) is **Android-only**; this SDK does
+not offer it on iOS.
 
 USB cable has no address — you supply an `EcrChannel` that already owns the byte
 stream (External Accessory / DriverKit on device). Framing, signing and messages
@@ -368,14 +385,15 @@ var config = EcrConfig(
     minorUnitDigits: 3,       // baisa
     port: 9100,
     connectTimeout: 10,       // seconds
-    responseTimeout: 120,     // the cardholder's time, not the network's
+    responseTimeout: 120,     // LAN default; Web Service plan bumps to 130s
     probeTimeout: 3,          // probe / isReachable only
     environment: .sit         // Web Service only
 )
 config.secureHashKey = secret
 ```
 
-`responseTimeout` is 120 seconds because a sale waits for a human being to
+`responseTimeout` defaults to 120 seconds on LAN (and **130 seconds** on Web
+Service) because a sale waits for a human being to
 present a card and key a PIN. Shortening it does not make the terminal faster;
 it makes a completed sale time out and land in the unknown-outcome path.
 

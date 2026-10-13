@@ -138,6 +138,76 @@ final class EcrResponseReaderTests: XCTestCase {
         guard case .declined = declined else { return XCTFail("expected declined") }
     }
 
+    func testNoResponseWithInquireNextStepIsTimeoutFailed() {
+        let result = EcrTerminal.result(
+            from: json("""
+            {
+              "success": false,
+              "responseCode": "NO_RESPONSE",
+              "message": "timeout",
+              "nextStep": "INQUIRE_BY_MERCHANT_REFERENCE"
+            }
+            """),
+            merchantReference: "ORD-TIMEOUT-01",
+            minorUnitDigits: 3
+        )
+
+        guard case let .failed(reference, failure, recovered) = result else {
+            return XCTFail("expected failed, got \(result)")
+        }
+        XCTAssertEqual("ORD-TIMEOUT-01", reference)
+        guard case let .timeout(message) = failure else {
+            return XCTFail("expected timeout, got \(failure)")
+        }
+        XCTAssertEqual("timeout", message)
+        XCTAssertNil(recovered)
+        XCTAssertEqual(.inquireByMerchantReference, result.nextStep)
+    }
+
+    func testOrdinaryDeclineWithoutInquireNextStepStaysDeclined() {
+        let result = EcrTerminal.result(
+            from: json("""
+            {
+              "success": false,
+              "responseCode": "51",
+              "message": "Declined",
+              "nextStep": "NONE"
+            }
+            """),
+            merchantReference: "ORD-DECLINE-01",
+            minorUnitDigits: 3
+        )
+
+        guard case let .declined(declined) = result else {
+            return XCTFail("expected declined, got \(result)")
+        }
+        XCTAssertEqual("51", declined.responseCode)
+        XCTAssertEqual(.none, declined.nextStep)
+    }
+
+    func testInquireNextStepWithoutTimeoutWordingIsConnectionLost() {
+        let result = EcrTerminal.result(
+            from: json("""
+            {
+              "success": false,
+              "responseCode": "502",
+              "message": "Bad Gateway",
+              "nextStep": "INQUIRE_BY_MERCHANT_REFERENCE"
+            }
+            """),
+            merchantReference: "ORD-5XX-01",
+            minorUnitDigits: 3
+        )
+
+        guard case let .failed(_, failure, _) = result else {
+            return XCTFail("expected failed, got \(result)")
+        }
+        guard case let .connectionLost(message) = failure else {
+            return XCTFail("expected connectionLost, got \(failure)")
+        }
+        XCTAssertEqual("Bad Gateway", message)
+    }
+
     func testAPartialApprovalIsAnApprovalThatNamesWhatWasAskedFor() {
         let result = EcrTerminal.result(
             from: json("""
@@ -350,6 +420,88 @@ final class EcrResponseReaderTests: XCTestCase {
             return XCTFail("expected found")
         }
         XCTAssertEqual("0.258", transaction.amount)
+    }
+
+    func testHubFlatFieldsAreReadWhenNestedDataIsOnlyCorrelation() {
+        let inquiry = EcrTerminal.inquiry(
+            from: json("""
+            {
+              "success": true,
+              "responseCode": "00",
+              "message": "Approved",
+              "data": {
+                "merchantReference": "A9A14AE818B9",
+                "terminalSerial": "P653200085189"
+              },
+              "merchantReference": "A9A14AE818B9",
+              "systemTraceNr": "000032",
+              "status": "Approved",
+              "amount": "1.234",
+              "transactionId": "e970c800-93f1-11f1-9485-e7dd858253ff",
+              "rrn": "7862802964726844904806",
+              "transactionTypeDisplayName": "Purchase",
+              "currency": "OMR"
+            }
+            """),
+            merchantReference: "R",
+            minorUnitDigits: 3
+        )
+
+        guard case let .found(reference, transaction, _) = inquiry else {
+            return XCTFail("expected found, got \(inquiry)")
+        }
+        XCTAssertEqual("A9A14AE818B9", reference)
+        XCTAssertEqual("000032", transaction.stan)
+        XCTAssertEqual("Approved", transaction.status)
+        XCTAssertEqual("1.234", transaction.amount)
+        XCTAssertEqual("Purchase", transaction.type)
+        XCTAssertEqual("OMR", transaction.currency)
+    }
+
+    func testCorrelationOnlyDataWithoutATransactionRecordIsNotFound() {
+        let inquiry = EcrTerminal.inquiry(
+            from: json("""
+            {
+              "success": false,
+              "responseCode": "25",
+              "message": "Transaction not found",
+              "data": {
+                "merchantReference": "A9A14AE818B9",
+                "terminalSerial": "P653200085189"
+              },
+              "errorList": []
+            }
+            """),
+            merchantReference: "A9A14AE818B9",
+            minorUnitDigits: 3
+        )
+
+        guard case let .notFound(reference, reason, _) = inquiry else {
+            return XCTFail("expected notFound, got \(inquiry)")
+        }
+        XCTAssertEqual("A9A14AE818B9", reference)
+        XCTAssertEqual("Transaction not found", reason)
+    }
+
+    func testInquiryReferencePrefersTheRecordsOwnThenTheEnvelopeThenTheParameter() {
+        let record = EcrTerminal.inquiry(
+            from: json("""
+            {"success": true, "merchantReference": "ENV",
+             "data": {"stan": "000001", "merchantReference": "REC"}}
+            """),
+            merchantReference: "PARAM",
+            minorUnitDigits: 3
+        )
+        XCTAssertEqual("REC", record.merchantReference)
+
+        let param = EcrTerminal.inquiry(
+            from: json("""
+            {"success": true, "data": {"stan": "000001"}}
+            """),
+            merchantReference: "PARAM",
+            minorUnitDigits: 3
+        )
+        XCTAssertEqual("PARAM", param.merchantReference)
     }
 
     // MARK: - Receipts

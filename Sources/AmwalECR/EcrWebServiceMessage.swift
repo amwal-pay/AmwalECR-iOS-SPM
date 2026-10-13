@@ -15,43 +15,51 @@ enum EcrWebServiceMessage {
         amountMinorUnits: Int64? = nil,
         stan: String = "",
         originalTransactionDate: String = "",
+        /// Set for inquiry-by-reference; ignored for stan-based inquiry.
+        originalMerchantReference: String = "",
         merchantReference: String = "",
-        transactionDateTime: String = "",
-        requestDateTime: String = ""
+        transactionDateTime: String = ""
     ) throws -> (String, [String: Any]) {
         let reference = try EcrMessage.merchantReference(merchantReference)
         let wireDateTime = transactionDateTime.isEmpty ? timestamp() : transactionDateTime
         var body: [String: Any] = [
             "version": EcrMessage.protocolVersion,
             "messageType": type.messageType,
-            "merchantReference": reference,
-            "terminalSerial": terminalSerial,
-            "currencyCode": currencyCode,
-            "transactionDateTime": wireDateTime,
-            "requestDateTime": requestDateTime.isEmpty ? wireDateTime : requestDateTime,
-            "ecrId": ecrId,
             "merchantId": merchantId,
             "terminalId": terminalId,
+            "terminalSerial": terminalSerial,
+            "ecrId": ecrId,
+            "merchantReference": reference,
+            "currencyCode": currencyCode,
+            "transactionDateTime": wireDateTime,
+            // Hub validates this separately from transactionDateTime
+            // (`RequestDateTimeIsRequired` when omitted).
+            "requestDateTime": wireDateTime,
         ]
 
         switch type {
         case .sale:
-            let minor = String(amountMinorUnits ?? 0)
-            body["amount"] = minor.count >= 12
-                ? minor
-                : String(repeating: "0", count: 12 - minor.count) + minor
+            body["amount"] = paddedAmount(amountMinorUnits)
         case .void:
             body["stan"] = EcrMessage.paddedStan(stan)
+            body["originalMerchantReference"] = reference
+            body["originalTerminalId"] = terminalId
         case .refund:
-            let minor = String(amountMinorUnits ?? 0)
-            body["amount"] = minor.count >= 12
-                ? minor
-                : String(repeating: "0", count: 12 - minor.count) + minor
+            body["amount"] = paddedAmount(amountMinorUnits)
             body["stan"] = EcrMessage.paddedStan(stan)
             body["originalTransactionDate"] = originalTransactionDate
+            body["originalMerchantReference"] = reference
+            body["originalTerminalId"] = terminalId
         case .inquiry:
-            body["stan"] = EcrMessage.paddedStan(stan)
+            let invoiceStan = EcrMessage.paddedStan(stan)
+            let byReference = invoiceStan.isEmpty && !originalMerchantReference.trimmed.isEmpty
+            body["stan"] = invoiceStan
             body["originalTransactionDate"] = originalTransactionDate
+            // By STAN → empty originalMerchantReference; by reference → set it.
+            body["originalMerchantReference"] = byReference
+                ? try EcrMessage.merchantReference(originalMerchantReference)
+                : ""
+            body["originalTerminalId"] = terminalId
         case .receipt:
             throw EcrInvalidArgument("Receipt is not a Web Service operation")
         case .signOn:
@@ -68,6 +76,13 @@ enum EcrWebServiceMessage {
         }
 
         return (reference, json)
+    }
+
+    private static func paddedAmount(_ amountMinorUnits: Int64?) -> String {
+        let minor = String(amountMinorUnits ?? 0)
+        return minor.count >= 12
+            ? minor
+            : String(repeating: "0", count: 12 - minor.count) + minor
     }
 
     private static func timestamp() -> String {

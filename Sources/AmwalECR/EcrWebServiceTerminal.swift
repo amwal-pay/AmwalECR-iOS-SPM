@@ -138,11 +138,7 @@ public final class EcrWebServiceTerminal {
                 originalTransactionDate: transactionDate
             )
             let response = api.postJson(operation: .transactionStatus, body: body)
-            return EcrTerminal.inquiry(
-                from: response,
-                merchantReference: reference,
-                minorUnitDigits: config.minorUnitDigits
-            )
+            return readInquiry(response, reference: reference)
         } catch let error as EcrInvalidArgument {
             return .failed(merchantReference: merchantReference, failure: .malformed(error.message))
         } catch {
@@ -158,10 +154,63 @@ public final class EcrWebServiceTerminal {
         transactionDate: String,
         merchantReference: String = ""
     ) -> EcrInquiry {
-        inquire(
-            receiptNumber: "",
-            transactionDate: transactionDate,
-            merchantReference: merchantReference.isEmpty ? originalReference : merchantReference
+        guard !originalReference.trimmed.isEmpty else {
+            return .failed(
+                merchantReference: merchantReference,
+                failure: .malformed("An inquiry by reference needs the original's reference")
+            )
+        }
+        guard let ids = backendIds() else {
+            return .failed(
+                merchantReference: merchantReference,
+                failure: .malformed("merchantId and terminalId are required for Web Service ECR")
+            )
+        }
+        do {
+            let (reference, body) = try buildRequest(
+                type: .inquiry,
+                ids: ids,
+                merchantReference: merchantReference,
+                stan: "",
+                originalTransactionDate: transactionDate,
+                originalMerchantReference: originalReference
+            )
+            let response = api.postJson(operation: .transactionStatus, body: body)
+            return readInquiry(response, reference: reference)
+        } catch let error as EcrInvalidArgument {
+            return .failed(merchantReference: merchantReference, failure: .malformed(error.message))
+        } catch {
+            return .failed(
+                merchantReference: merchantReference,
+                failure: .malformed(error.localizedDescription)
+            )
+        }
+    }
+
+    private func readInquiry(_ response: [String: Any], reference: String) -> EcrInquiry {
+        // A transport failure is synthesised as an answer with no data, which
+        // would read as "not found" — and a till told nothing was taken may
+        // charge again. It is a failed lookup, not a finding.
+        Self.inquiryTransportFailure(response, reference: reference)
+            ?? EcrTerminal.inquiry(
+                from: response,
+                merchantReference: reference,
+                minorUnitDigits: config.minorUnitDigits
+            )
+    }
+
+    /// When the HTTP layer marks an unknown outcome and there is no transaction
+    /// record, returns `.failed(.connectionLost)` instead of letting the reader
+    /// treat that as "not found".
+    static func inquiryTransportFailure(_ response: [String: Any], reference: String) -> EcrInquiry? {
+        guard ecrString(response, "nextStep") == HttpEcrWebServiceApi.unknownOutcomeStep else {
+            return nil
+        }
+        if response["data"] is [String: Any] { return nil }
+        let reason = ecrString(response, "message")
+        return .failed(
+            merchantReference: reference,
+            failure: .connectionLost(reason.isEmpty ? "The Web Service did not answer" : reason)
         )
     }
 
@@ -171,7 +220,8 @@ public final class EcrWebServiceTerminal {
         merchantReference: String = "",
         amountMinorUnits: Int64? = nil,
         stan: String = "",
-        originalTransactionDate: String = ""
+        originalTransactionDate: String = "",
+        originalMerchantReference: String = ""
     ) throws -> (String, [String: Any]) {
         let (merchantId, terminalId) = ids
         let built = try EcrWebServiceMessage.build(
@@ -185,6 +235,7 @@ public final class EcrWebServiceTerminal {
             amountMinorUnits: amountMinorUnits,
             stan: stan,
             originalTransactionDate: originalTransactionDate,
+            originalMerchantReference: originalMerchantReference,
             merchantReference: merchantReference
         )
         WebServiceHttpLog.operation(

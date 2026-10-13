@@ -295,6 +295,11 @@ public enum EcrSessions {
             var resolved = config
             resolved.merchantId = merchantId
             resolved.terminalId = terminalId
+            // Web Service HTTP read timeout — 130s unless the caller already
+            // overrode the LAN default (120s).
+            if resolved.responseTimeout == EcrConfig.defaultResponseTimeout {
+                resolved.responseTimeout = EcrConfig.webServiceResponseTimeout
+            }
             return resolved
         }
     }

@@ -5,6 +5,51 @@ the addition described in
 [the release policy](https://github.com/amwal-pay/amwal-ecr-flutter/blob/main/doc/release-policy.md): any change to
 what an outcome *means* is breaking, however small the diff.
 
+## 0.3.0
+
+Port of Android `ecr-sdk` 1.0.7 Web Service changes. Tag `v0.3.0` to publish.
+
+### Breaking
+
+- **Inquiry transport failure is `.failed(.connectionLost)`, not `.notFound`.**
+  Over Web Service, no response, an empty or non-JSON body, or an HTTP 5xx now
+  yields `EcrInquiry.failed(…, .connectionLost(…))` when no transaction record
+  came back. Previously the synthesised answer read as "not found", which could
+  invite a till to charge again.
+- **Wire payload fields changed** for Web Service operations: every request
+  carries `requestDateTime` equal to `transactionDateTime`; void and refund send
+  `originalMerchantReference` (the request's own reference) and
+  `originalTerminalId`; inquiry sends `stan`, `originalTransactionDate`,
+  `originalMerchantReference` and `originalTerminalId`.
+- **Web Service Hub bases** for SIT / UAT / PROD are resolved internally from
+  `EcrConfig.environment` and are not published in customer docs (UAT base
+  updated to match Android `ecr-sdk` 1.0.7).
+- **`EcrWebServiceTerminal.inquireByReference`** now sends the original's
+  reference as `originalMerchantReference` with an empty `stan`, and uses
+  `merchantReference` only to name the inquiry itself. A blank original reference
+  answers `.failed(.malformed)`.
+- **Sale / void / refund unknown outcomes are `.failed`, not `.declined`.**
+  A `success: false` envelope with `nextStep: INQUIRE_BY_MERCHANT_REFERENCE`
+  (typically `NO_RESPONSE` / timeout wording) is `.failed(.timeout)` or
+  `.failed(.connectionLost)`. An ordinary decline without that next step is
+  unchanged. Money may have moved — inquire by reference; do not treat it as
+  "no money taken" and retry the sale.
+
+### Changed
+
+- Inquiry path is `/Ecr/Inquiry`.
+- HTTP error envelopes synthesised by the SDK carry
+  `nextStep: INQUIRE_BY_MERCHANT_REFERENCE` when the outcome is unknown (no
+  response, empty/invalid body, 5xx). 4xx statuses do not.
+- Inquiry reading uses nested `data` only when it holds a transaction record;
+  otherwise it falls back to the Hub's flat fields at the envelope root.
+  Correlation-only `data` (`merchantReference`, `terminalSerial`) is `.notFound`.
+- **Web Service default read timeout is 130s** (`EcrConfig.webServiceResponseTimeout`).
+  `EcrSessions.plan` applies it when the config still has the LAN default of
+  120s; an explicit override is kept.
+- Request payload is logged before the signing line.
+- Docs: Web Service inquiry-by-reference; app-to-app `PRINT` is Android-only.
+
 ## 0.2.3
 
 Documentation only — no API or wire changes. Tag `v0.2.3` to publish (SwiftPM
@@ -99,8 +144,8 @@ accepted when reading.
   not the outer `success`/`approved` flag.
 - **Partial inquiry amounts:** `amount` is the requested amount;
   `authorizedAmount` is the settled (`authorizeAmount`) value.
-- **Web Service Hub hosts** are distinct per environment (SIT `:25452`,
-  UAT `:15452`, PROD `pos.amwalpg.com`).
+- **Web Service Hub bases** are resolved internally per `EcrEnvironment`
+  (SIT / UAT / PROD) and are not published in customer docs.
 - **Diagnostics** never log hex slices of signing secrets — only
   `configured` / `not configured`.
 - Settled money-moving amounts still prefer `authorizeAmount` when greater than

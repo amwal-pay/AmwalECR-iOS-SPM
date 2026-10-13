@@ -8,12 +8,20 @@ public struct EcrConfig {
     /// The port Amwal POS terminals listen on for ECR requests.
     public static let defaultPort = 9100
 
+    /// Default LAN / USB read timeout (seconds).
+    public static let defaultResponseTimeout: TimeInterval = 120
+
+    /// HTTP read timeout for Web Service REST calls (`/Ecr/Sale`, void,
+    /// refund, inquiry). Longer than the LAN default: the Hub wait includes
+    /// card present + PIN, and 120s was cutting sales off early.
+    public static let webServiceResponseTimeout: TimeInterval = 130
+
     public var ecrId: String = "ECR01"
     public var currencyCode: String = "512"
     public var minorUnitDigits: Int = 3
     public var port: Int = EcrConfig.defaultPort
     public var connectTimeout: TimeInterval = 10
-    public var responseTimeout: TimeInterval = 120
+    public var responseTimeout: TimeInterval = EcrConfig.defaultResponseTimeout
     public var probeTimeout: TimeInterval = 3
 
     /// The secret this till shares with the terminal, as hex.
@@ -37,7 +45,7 @@ public struct EcrConfig {
         minorUnitDigits: Int = 3,
         port: Int = EcrConfig.defaultPort,
         connectTimeout: TimeInterval = 10,
-        responseTimeout: TimeInterval = 120,
+        responseTimeout: TimeInterval = EcrConfig.defaultResponseTimeout,
         probeTimeout: TimeInterval = 3,
         secureHashKey: String = "",
         merchantId: String = "",

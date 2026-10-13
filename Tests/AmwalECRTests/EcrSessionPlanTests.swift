@@ -106,6 +106,38 @@ final class EcrSessionPlanTests: XCTestCase {
         XCTAssertNil(session.probeReachability())
     }
 
+    func testWebServicePlanBumpsDefaultResponseTimeoutTo130() {
+        let plan = EcrSessions.plan(
+            link: .webService(merchantId: "13593", terminalId: "742001"),
+            config: EcrTestConfigs.webService
+        )
+
+        XCTAssertEqual(EcrConfig.defaultResponseTimeout, 120)
+        XCTAssertEqual(EcrConfig.webServiceResponseTimeout, 130)
+        XCTAssertEqual(EcrConfig.defaultResponseTimeout, EcrTestConfigs.webService.responseTimeout)
+        XCTAssertEqual(130, plan.config.responseTimeout)
+    }
+
+    func testWebServicePlanKeepsExplicitResponseTimeoutOverride() {
+        var config = EcrTestConfigs.webService
+        config.responseTimeout = 90
+        let plan = EcrSessions.plan(
+            link: .webService(merchantId: "13593", terminalId: "742001"),
+            config: config
+        )
+
+        XCTAssertEqual(90, plan.config.responseTimeout)
+    }
+
+    func testLanPlanKeepsDefaultResponseTimeoutAt120() {
+        let plan = EcrSessions.plan(
+            link: .lan(host: "127.0.0.1", port: 9100),
+            config: lanConfig
+        )
+
+        XCTAssertEqual(120, plan.config.responseTimeout)
+    }
+
     func testOpenUsbWithChannelFactory() {
         let plan = EcrSessions.plan(link: .usbCable, config: lanConfig)
         XCTAssertTrue(plan.isReady)

@@ -17,12 +17,34 @@ extension EcrTerminal {
             : envelope.merchantReference
 
         if !envelope.success {
+            let nextStep = EcrNextStep.of(ecrString(json, "nextStep"))
+            // Web Service / Hub synthesise timeouts as a false envelope with
+            // nextStep INQUIRE_BY_MERCHANT_REFERENCE (and often responseCode
+            // NO_RESPONSE). That is not a decline — money may have moved — so it
+            // must surface as Failed and push the till to inquire by reference.
+            if nextStep == .inquireByMerchantReference {
+                let reason = envelope.displayMessage.isEmpty ? "timeout" : envelope.displayMessage
+                let code = envelope.responseCode
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                    .uppercased()
+                let failure: EcrFailure =
+                    (code == "NO_RESPONSE"
+                        || reason.range(of: "timeout", options: .caseInsensitive) != nil)
+                    ? .timeout(reason)
+                    : .connectionLost(reason)
+                return .failed(
+                    merchantReference: resolvedReference,
+                    failure: failure,
+                    recovered: nil
+                )
+            }
+
             return .declined(
                 EcrDeclined(
                     merchantReference: resolvedReference,
                     responseCode: envelope.responseCode,
                     reason: envelope.displayMessage.isEmpty ? "Declined" : envelope.displayMessage,
-                    nextStep: EcrNextStep.of(ecrString(json, "nextStep")),
+                    nextStep: nextStep,
                     raw: EcrMessageCodec.text(json),
                     capabilities: refusedCapabilities(json)
                 )
@@ -86,10 +108,11 @@ extension EcrTerminal {
         minorUnitDigits: Int
     ) -> EcrInquiry {
         let envelope = EcrResponseEnvelope.parse(json)
-        let data = envelope.data
-        let resolvedReference = envelope.merchantReference.isEmpty
-            ? merchantReference
-            : envelope.merchantReference
+        let data = inquiryRecord(nested: envelope.data, root: json)
+        let fromRecord = data.map { ecrString($0, "merchantReference") } ?? ""
+        let resolvedReference = !fromRecord.isEmpty
+            ? fromRecord
+            : (envelope.merchantReference.isEmpty ? merchantReference : envelope.merchantReference)
 
         guard let data = data else {
             return .notFound(
@@ -149,6 +172,28 @@ extension EcrTerminal {
             ),
             raw: EcrMessageCodec.text(json)
         )
+    }
+
+    /// Nested `data` when it names a transaction; otherwise top-level Hub flat
+    /// fields. Correlation-only `data` (merchantReference / terminalSerial) is
+    /// not a found record.
+    private static func inquiryRecord(
+        nested: [String: Any]?,
+        root: [String: Any]
+    ) -> [String: Any]? {
+        if hasTransactionRecord(nested) { return nested }
+        let envelopeRoot = EcrResponseEnvelope.root(root)
+        return hasTransactionRecord(envelopeRoot) ? envelopeRoot : nil
+    }
+
+    private static let transactionRecordMarkers = [
+        "systemTraceNr", "stan", "transactionId", "status", "rrn", "authCode",
+        "amount", "authorizeAmount", "transactionType", "transactionTypeDisplayName",
+    ]
+
+    private static func hasTransactionRecord(_ data: [String: Any]?) -> Bool {
+        guard let data = data else { return false }
+        return transactionRecordMarkers.contains { !ecrString(data, $0).isEmpty }
     }
 
     static func receipt(from json: [String: Any], merchantReference: String) -> EcrReceipt {

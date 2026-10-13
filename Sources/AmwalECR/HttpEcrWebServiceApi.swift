@@ -2,6 +2,9 @@ import Foundation
 
 /// POSTs signed JSON bodies to the Web Service ECR REST endpoints.
 final class HttpEcrWebServiceApi {
+    /// The wire value `EcrNextStep.inquireByMerchantReference` is read from.
+    static let unknownOutcomeStep = "INQUIRE_BY_MERCHANT_REFERENCE"
+
     private let config: EcrConfig
     private let logger: EcrLogger
     private let routes: EcrWebServiceRoutes
@@ -14,17 +17,16 @@ final class HttpEcrWebServiceApi {
 
     func postJson(operation: EcrWebServiceOperation, body: [String: Any]) -> [String: Any] {
         let startedAt = Date()
-        logSigning(body)
 
         guard let payloadData = try? JSONSerialization.data(withJSONObject: body),
               let payload = String(data: payloadData, encoding: .utf8)
         else {
-            return errorBody(responseCode: "MALFORMED", message: "Request body could not be encoded as JSON")
+            return Self.errorBody(responseCode: "MALFORMED", message: "Request body could not be encoded as JSON")
         }
 
         let urlString = routes.fullUrl(operation)
         guard let url = URL(string: urlString) else {
-            return errorBody(responseCode: "MALFORMED", message: "Invalid Web Service URL")
+            return Self.errorBody(responseCode: "MALFORMED", message: "Invalid Web Service URL")
         }
 
         WebServiceHttpLog.request(
@@ -34,6 +36,7 @@ final class HttpEcrWebServiceApi {
             environment: config.environment,
             payload: payload
         )
+        logSigning(body)
 
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -65,7 +68,7 @@ final class HttpEcrWebServiceApi {
                 message: requestError.localizedDescription,
                 elapsedMs: elapsedMs
             )
-            return errorBody(
+            return Self.errorBody(
                 responseCode: "NO_RESPONSE",
                 message: requestError.localizedDescription
             )
@@ -90,7 +93,7 @@ final class HttpEcrWebServiceApi {
                 message: "Empty response (\(HTTPURLResponse.localizedString(forStatusCode: status)))",
                 elapsedMs: elapsedMs
             )
-            return errorBody(
+            return Self.errorBody(
                 responseCode: String(status),
                 message: "Empty response from Web Service (\(HTTPURLResponse.localizedString(forStatusCode: status)))"
             )
@@ -103,7 +106,7 @@ final class HttpEcrWebServiceApi {
                 message: "Invalid JSON",
                 elapsedMs: elapsedMs
             )
-            return errorBody(
+            return Self.errorBody(
                 responseCode: String(status),
                 message: "Response was not valid JSON"
             )
@@ -126,9 +129,11 @@ final class HttpEcrWebServiceApi {
                 message: HTTPURLResponse.localizedString(forStatusCode: status),
                 elapsedMs: elapsedMs
             )
-            return errorBody(
+            // 5xx: request may have reached Hub — outcome unknown. 4xx: not.
+            return Self.errorBody(
                 responseCode: String(status),
-                message: HTTPURLResponse.localizedString(forStatusCode: status)
+                message: HTTPURLResponse.localizedString(forStatusCode: status),
+                outcomeUnknown: status >= 500
             )
         }
 
@@ -151,11 +156,24 @@ final class HttpEcrWebServiceApi {
         )
     }
 
-    private func errorBody(responseCode: String, message: String) -> [String: Any] {
-        [
+    /// The `success: false` envelope stood in for an answer that never came.
+    /// When the request may have reached the Hub — no response, an empty or
+    /// unreadable body, a 5xx — the outcome is unknown, so the envelope says so
+    /// with `nextStep`: a till must inquire, not treat it as a refusal and send
+    /// the sale again.
+    static func errorBody(
+        responseCode: String,
+        message: String,
+        outcomeUnknown: Bool = true
+    ) -> [String: Any] {
+        var body: [String: Any] = [
             "success": false,
             "responseCode": responseCode,
             "message": message,
         ]
+        if outcomeUnknown {
+            body["nextStep"] = unknownOutcomeStep
+        }
+        return body
     }
 }
