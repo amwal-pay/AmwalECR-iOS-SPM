@@ -7,7 +7,7 @@ what an outcome *means* is breaking, however small the diff.
 
 ## 0.3.0
 
-Port of Android `ecr-sdk` 1.0.7 Web Service changes. Tag `v0.3.0` to publish.
+Port of Android `ecr-sdk` 1.0.8 Web Service changes. Tag `v0.3.0` to publish.
 
 ### Breaking
 
