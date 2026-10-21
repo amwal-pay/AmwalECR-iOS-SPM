@@ -24,7 +24,7 @@ public struct EcrReachability {
     }
 }
 
-/// A POS terminal reachable over a channel (LAN TCP, USB cable, or anything
+/// A POS terminal reachable over a channel (Wi-Fi TCP, USB cable, or anything
 /// else that can carry one request and bring back one answer).
 public final class EcrTerminal {
 
@@ -38,7 +38,7 @@ public final class EcrTerminal {
 
     /// The terminal reached through an arbitrary byte channel.
     ///
-    /// Prefer `init(host:…)` for LAN, or `EcrSessions.usbCableTerminal` when the
+    /// Prefer `init(host:…)` for Wi-Fi, or `EcrSessions.usbCableTerminal` when the
     /// caller already holds a cable channel.
     public init(
         channel: EcrChannel,
@@ -147,9 +147,9 @@ public final class EcrTerminal {
         )
 
         switch exchange(message) {
-        case let .failure(failure):
+        case .failure(let failure):
             return lost(message.merchantReference, failure)
-        case let .success(json):
+        case .success(let json):
             return EcrTerminal.result(
                 from: json,
                 merchantReference: message.merchantReference,
@@ -206,9 +206,9 @@ public final class EcrTerminal {
     public func signOn(merchantReference: String = "") throws -> EcrSignOn {
         let message = try build(.signOn, merchantReference: merchantReference)
         switch exchange(message) {
-        case let .failure(failure):
+        case .failure(let failure):
             return .failed(merchantReference: message.merchantReference, failure: failure)
-        case let .success(json):
+        case .success(let json):
             return EcrTerminal.signOn(
                 from: json,
                 merchantReference: message.merchantReference
@@ -223,9 +223,9 @@ public final class EcrTerminal {
     public func closeReceipt(merchantReference: String = "") throws -> EcrReceiptClosed {
         let message = try build(.closeReceipt, merchantReference: merchantReference)
         switch exchange(message) {
-        case let .failure(failure):
+        case .failure(let failure):
             return .failed(merchantReference: message.merchantReference, failure: failure)
-        case let .success(json):
+        case .success(let json):
             return EcrTerminal.receiptClosed(
                 from: json,
                 merchantReference: message.merchantReference
@@ -252,9 +252,9 @@ public final class EcrTerminal {
         )
 
         switch exchange(message) {
-        case let .failure(failure):
+        case .failure(let failure):
             return .failed(merchantReference: message.merchantReference, failure: failure)
-        case let .success(json):
+        case .success(let json):
             return EcrTerminal.receipt(
                 from: json,
                 merchantReference: message.merchantReference
@@ -271,9 +271,9 @@ public final class EcrTerminal {
 
     private func inquiryAnswer(_ message: EcrMessage) -> EcrInquiry {
         switch exchange(message) {
-        case let .failure(failure):
+        case .failure(let failure):
             return .failed(merchantReference: message.merchantReference, failure: failure)
-        case let .success(json):
+        case .success(let json):
             return EcrTerminal.inquiry(
                 from: json,
                 merchantReference: message.merchantReference,
@@ -354,16 +354,18 @@ public final class EcrTerminal {
             }
             return .success(answer)
         } catch is EcrChannelTimeout {
-            return .failure(.timeout(
-                "The terminal did not answer within \(Int(config.responseTimeout))s. "
-                    + "The transaction may still have completed — inquire before retrying."
-            ))
+            return .failure(
+                .timeout(
+                    "The terminal did not answer within \(Int(config.responseTimeout))s. "
+                        + "The transaction may still have completed — inquire before retrying."
+                ))
         } catch let error as EcrSocket.SocketError {
-            return .failure(EcrTerminal.failure(
-                for: error,
-                endpoint: channel.endpoint,
-                responseTimeout: config.responseTimeout
-            ))
+            return .failure(
+                EcrTerminal.failure(
+                    for: error,
+                    endpoint: channel.endpoint,
+                    responseTimeout: config.responseTimeout
+                ))
         } catch let error as EcrFrameError {
             let reason = error.errorDescription ?? "Framing error"
             if reason.contains("empty message") || reason.contains("does not fit") {
@@ -375,11 +377,11 @@ public final class EcrTerminal {
             return .failure(.unreachable("\(reason) (\(channel.endpoint))"))
         } catch let error as EcrMessageCodec.CodecError {
             switch error {
-            case let .tooLarge(message):
+            case .tooLarge(let message):
                 return .failure(.malformed(message))
             case .empty:
                 return .failure(.malformed("Terminal returned an empty message"))
-            case let .notJson(message):
+            case .notJson(let message):
                 return .failure(.malformed(message))
             }
         } catch {
@@ -429,14 +431,14 @@ public final class EcrTerminal {
         responseTimeout: TimeInterval
     ) -> EcrFailure {
         switch error {
-        case let .unreachable(message):
+        case .unreachable(let message):
             return .unreachable("\(message) (\(endpoint))")
         case .timedOut:
             return .timeout(
                 "The terminal did not answer within \(Int(responseTimeout))s. "
                     + "The transaction may still have completed — inquire before retrying."
             )
-        case let .closed(message):
+        case .closed(let message):
             return .connectionLost(message)
         case .cancelled:
             return .connectionLost("The exchange was cancelled by the caller")

@@ -45,7 +45,7 @@ Port of Android `ecr-sdk` 1.0.8 Web Service changes. Tag `v0.3.0` to publish.
   otherwise it falls back to the Hub's flat fields at the envelope root.
   Correlation-only `data` (`merchantReference`, `terminalSerial`) is `.notFound`.
 - **Web Service default read timeout is 130s** (`EcrConfig.webServiceResponseTimeout`).
-  `EcrSessions.plan` applies it when the config still has the LAN default of
+  `EcrSessions.plan` applies it when the config still has the Wi-Fi default of
   120s; an explicit override is kept.
 - Request payload is logged before the signing line.
 - Docs: Web Service inquiry-by-reference; app-to-app `PRINT` is Android-only.
@@ -59,7 +59,7 @@ resolves from tags).
 
 - **README** and **`doc/implementation.md`** now match the current surface:
   Wi‑Fi / USB cable / Web Service; sign-on and close-receipt outcomes; the
-  transport support matrix; LAN HMAC vs Web Service body signing; `cancel` and
+  transport support matrix; Wi-Fi HMAC vs Web Service body signing; `cancel` and
   `probeReachability` per transport.
 - Platform floor remains **iOS 12.0+** (CocoaPods pod targets iOS 17.0+).
 
@@ -121,13 +121,13 @@ accepted when reading.
 - **`EcrLink.usbCable`** — addressless USB cable link; caller supplies an
   `EcrChannel`.
 - **`EcrChannel`**, **`EcrChannelTimeout`**, and **`TcpEcrChannel`** — transport
-  abstraction; LAN continues to use TCP framing via `TcpEcrChannel`.
+  abstraction; Wi-Fi continues to use TCP framing via `TcpEcrChannel`.
 - **`EcrFrames`** — public `wrap` / `bodyLength` / `readBody` matching Android.
 - **`EcrSessionPlan.usesUsbCable`**, connection summary `"USB cable"`, and
   **`EcrSessions.usbCableTerminal(…)`**.
 - **`EcrTerminal` channel initialiser** — host-based init remains and builds a
   `TcpEcrChannel`.
-- **`EcrOpenedSession`** and **`EcrSessions.open`** — one dispatch for LAN /
+- **`EcrOpenedSession`** and **`EcrSessions.open`** — one dispatch for Wi-Fi /
   USB cable / Web Service so sale, inquiry, and recovery share the same client.
 - Unit-test placeholders aligned with `ecr_sdk`: `SECURE_HASH_KEY_ECR_WIFI`,
   `SECURE_HASH_KEY_ECR_WIFI_OTHER`, `SECURE_HASH_KEY_WEBSERVICE` on

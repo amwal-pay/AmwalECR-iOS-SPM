@@ -36,9 +36,9 @@ public protocol EcrChannel {
     func exchange(body: Data, timeout: TimeInterval) throws -> Data
 }
 
-public extension EcrChannel {
-    var host: String { endpoint }
-    var port: Int { 0 }
+extension EcrChannel {
+    public var host: String { endpoint }
+    public var port: Int { 0 }
 }
 
 /// The terminal did not answer in time. The transaction may still have run.
@@ -50,7 +50,7 @@ public struct EcrChannelTimeout: LocalizedError {
     }
 }
 
-/// The terminal over TCP, on the shop's Wi‑Fi / LAN.
+/// The terminal over TCP, on the shop's Wi‑Fi.
 ///
 /// One connection carries one request and one answer, which is how POS ECR ports
 /// behave: connect, send, wait for the cardholder, read the result, disconnect.
@@ -121,7 +121,7 @@ public final class TcpEcrChannel: EcrChannel {
             }
         } catch let error as EcrSocket.SocketError {
             switch error {
-            case let .timedOut(message):
+            case .timedOut(let message):
                 throw EcrChannelTimeout(message)
             default:
                 throw error

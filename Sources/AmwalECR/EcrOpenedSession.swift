@@ -2,7 +2,7 @@ import Foundation
 
 /// One opened transport for a validated `EcrSessionPlan`.
 ///
-/// Apps open this through `EcrSessions.open` so LAN / USB / Web Service dispatch
+/// Apps open this through `EcrSessions.open` so Wi-Fi / USB / Web Service dispatch
 /// lives in one place — sale, inquiry, and recovery then share the same path.
 public final class EcrOpenedSession {
     public let plan: EcrSessionPlan
@@ -19,7 +19,7 @@ public final class EcrOpenedSession {
 
     public var usesLocalTerminal: Bool { local != nil }
 
-    /// Receipt URLs exist only on the local (LAN / USB) protocol.
+    /// Receipt URLs exist only on the local (Wi-Fi / USB) protocol.
     public var supportsReceipt: Bool { local != nil }
 
     /// Whether this session can ask the terminal to describe itself.

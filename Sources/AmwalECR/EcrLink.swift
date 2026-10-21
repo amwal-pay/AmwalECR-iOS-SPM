@@ -5,7 +5,7 @@ import Foundation
 /// The app supplies addressing and backend IDs; the SDK owns protocol choice,
 /// signing, and transport.
 public enum EcrLink {
-    /// Wi‑Fi / LAN — TCP to `host`:`port`.
+    /// Wi‑Fi — TCP to `host`:`port`.
     case lan(host: String, port: Int = EcrConfig.defaultPort)
 
     /// A USB cable straight from this till to the terminal.

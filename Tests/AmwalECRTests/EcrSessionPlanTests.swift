@@ -1,4 +1,5 @@
 import XCTest
+
 @testable import AmwalECR
 
 final class EcrSessionPlanTests: XCTestCase {
@@ -13,7 +14,7 @@ final class EcrSessionPlanTests: XCTestCase {
         )
 
         XCTAssertFalse(plan.isReady)
-        XCTAssertTrue(plan.issues.contains("IP address is required for LAN ECR"))
+        XCTAssertTrue(plan.issues.contains("IP address is required for Wi-Fi ECR"))
         XCTAssertTrue(plan.issues.contains("\(SecureHash.keyLabel) is not configured"))
     }
 
@@ -51,7 +52,7 @@ final class EcrSessionPlanTests: XCTestCase {
         )
         XCTAssertFalse(
             lanPlan.usesUsbCable,
-            "usbCableTerminal preconditions on usesUsbCable — LAN plans must fail that guard"
+            "usbCableTerminal preconditions on usesUsbCable — Wi-Fi plans must fail that guard"
         )
 
         let plan = EcrSessions.plan(

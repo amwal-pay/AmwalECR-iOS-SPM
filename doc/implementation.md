@@ -5,14 +5,14 @@ receipt with this package. The same content is summarised in the
 [README](../README.md#implementation).
 
 Prefer **`EcrSessions.plan` → `EcrSessions.open`**. Sale, inquiry, sign-on,
-close-receipt and recovery then share one transport (LAN, USB cable, or Web
+close-receipt and recovery then share one transport (Wi-Fi, USB cable, or Web
 Service) and cannot diverge on which client they build. Construct `EcrTerminal`
 or `EcrWebServiceTerminal` directly only when you already know the link.
 
 ### 1. Plan and open a session
 
 **The app owns persistence** (Keychain / settings) and passes **one** value on
-`EcrConfig.secureHashKey` for the selected mode — LAN (Wi‑Fi / USB cable) and
+`EcrConfig.secureHashKey` for the selected mode — (Wi‑Fi / USB cable) and
 Web Service use different secrets, but the SDK only consumes the field you
 assign:
 
@@ -73,7 +73,7 @@ not `.declined` — inquire by reference; do not retry the sale.
 
 Web Service default read timeout is **130s**
 (`EcrConfig.webServiceResponseTimeout`). `EcrSessions.plan` applies it when the
-config still has the LAN default of 120s; an explicit override is kept.
+config still has the Wi-Fi default of 120s; an explicit override is kept.
 
 App-to-app `PRINT` (receipt image hand-over) is **Android-only**; this SDK does
 not offer it on iOS.
@@ -130,7 +130,7 @@ DispatchQueue.global(qos: .userInitiated).async {
     }
 }
 
-// The operator gave up. This stops the wait on a LAN TCP socket — it does not
+// The operator gave up. This stops the wait on a Wi-Fi TCP socket — it does not
 // stop the terminal, and the outcome is unknown. Web Service and a
 // caller-supplied USB channel are unaffected.
 session.cancel()
@@ -204,7 +204,7 @@ On `EcrTerminal` only, sale / void / refund also share `run(_:amount:originalSta
 | Close receipt | ✔ | ✔ | `.refused` — nothing sent |
 | E-receipt URL | ✔ | ✔ | `.unavailable` — nothing sent |
 | `probeReachability` | ✔ | ✔ | `nil` |
-| `cancel` | stops LAN TCP wait | no-op unless the channel is `TcpEcrChannel` | no-op |
+| `cancel` | stops Wi-Fi TCP wait | no-op unless the channel is `TcpEcrChannel` | no-op |
 
 USB cable has no built-in hardware driver in this package — you supply an
 `EcrChannel`. Framing, signing, and messages match Wi‑Fi.

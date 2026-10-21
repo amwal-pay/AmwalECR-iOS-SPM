@@ -46,11 +46,11 @@ public struct EcrSessionPlan {
     /// Operator-facing connection summary — no secrets.
     public var connectionSummary: String {
         switch link {
-        case let .lan(host, _):
+        case .lan(let host, _):
             return "\(host):\(config.port)"
         case .usbCable:
             return "USB cable"
-        case let .webService(merchantId, terminalId):
+        case .webService(let merchantId, let terminalId):
             var parts = [config.environment.rawValue]
             if !merchantId.isEmpty { parts.append("merchant \(merchantId)") }
             if !terminalId.isEmpty { parts.append("terminal \(terminalId)") }
@@ -100,7 +100,7 @@ public enum EcrSessions {
 
     /// Opens the transport that `plan` describes.
     ///
-    /// One dispatch for LAN / USB cable / Web Service so callers (and recovery
+    /// One dispatch for Wi-Fi / USB cable / Web Service so callers (and recovery
     /// paths) cannot diverge on which client they build.
     ///
     /// - Parameter usbChannel: required when `plan.usesUsbCable`; ignored otherwise.
@@ -160,10 +160,10 @@ public enum EcrSessions {
         logger: EcrLogger = .none
     ) -> EcrTerminal {
         guard plan.usesLan else {
-            preconditionFailure("plan is not for LAN ECR")
+            preconditionFailure("plan is not for Wi-Fi ECR")
         }
-        guard case let .lan(host, _) = plan.link else {
-            preconditionFailure("plan is not for LAN ECR")
+        guard case .lan(let host, _) = plan.link else {
+            preconditionFailure("plan is not for Wi-Fi ECR")
         }
         return EcrTerminal(
             host: host,
@@ -248,9 +248,9 @@ public enum EcrSessions {
     }
 
     private static func validateLan(_ link: EcrLink, issues: inout [String]) {
-        guard case let .lan(host, port) = link else { return }
+        guard case .lan(let host, let port) = link else { return }
         if host.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            issues.append("IP address is required for LAN ECR")
+            issues.append("IP address is required for Wi-Fi ECR")
         }
         if port < 1 || port > 65535 {
             issues.append("Port must be between 1 and 65535 (default \(EcrConfig.defaultPort))")
@@ -258,7 +258,7 @@ public enum EcrSessions {
     }
 
     private static func validateWebService(_ link: EcrLink, issues: inout [String]) {
-        guard case let .webService(merchantId, terminalId) = link else { return }
+        guard case .webService(let merchantId, let terminalId) = link else { return }
         if merchantId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             issues.append("Merchant ID is required for Web Service")
         }
@@ -283,7 +283,7 @@ public enum EcrSessions {
     /// Merge transport addressing from `link` into `config` so callers cannot drift.
     private static func resolveConfig(link: EcrLink, config: EcrConfig) -> EcrConfig {
         switch link {
-        case let .lan(_, port):
+        case .lan(_, let port):
             var resolved = config
             resolved.port = port
             return resolved
@@ -291,12 +291,12 @@ public enum EcrSessions {
             // Nothing to merge — a cable is not addressed, so the port in the
             // config stays whatever it was and is simply never read.
             return config
-        case let .webService(merchantId, terminalId):
+        case .webService(let merchantId, let terminalId):
             var resolved = config
             resolved.merchantId = merchantId
             resolved.terminalId = terminalId
             // Web Service HTTP read timeout — 130s unless the caller already
-            // overrode the LAN default (120s).
+            // overrode the Wi-Fi default (120s).
             if resolved.responseTimeout == EcrConfig.defaultResponseTimeout {
                 resolved.responseTimeout = EcrConfig.webServiceResponseTimeout
             }

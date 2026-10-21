@@ -8,11 +8,11 @@ public struct EcrConfig {
     /// The port Amwal POS terminals listen on for ECR requests.
     public static let defaultPort = 9100
 
-    /// Default LAN / USB read timeout (seconds).
+    /// Default Wi-Fi / USB read timeout (seconds).
     public static let defaultResponseTimeout: TimeInterval = 120
 
     /// HTTP read timeout for Web Service REST calls (`/Ecr/Sale`, void,
-    /// refund, inquiry). Longer than the LAN default: the Hub wait includes
+    /// refund, inquiry). Longer than the Wi-Fi default: the Hub wait includes
     /// card present + PIN, and 120s was cutting sales off early.
     public static let webServiceResponseTimeout: TimeInterval = 130
 
@@ -27,9 +27,9 @@ public struct EcrConfig {
     /// The secret this till shares with the terminal, as hex.
     ///
     /// **The app owns persistence and chooses which secret to pass** for the
-    /// selected terminal mode (LAN vs Web Service use different secrets and
+    /// selected terminal mode (Wi-Fi vs Web Service use different secrets and
     /// signing formats, but both are supplied through this single field).
-    /// LAN ECR signs sorted `key=value` pairs; Web Service ECR signs the JSON
+    /// Wi-Fi ECR signs sorted `key=value` pairs; Web Service ECR signs the JSON
     /// request body with HMAC-SHA256 under the hex-decoded key.
     public var secureHashKey: String = ""
     public var merchantId: String = ""
@@ -145,11 +145,11 @@ public enum EcrFailure: Error {
 
     public var message: String {
         switch self {
-        case let .unreachable(message),
-             let .timeout(message),
-             let .malformed(message),
-             let .connectionLost(message),
-             let .unauthenticated(message):
+        case .unreachable(let message),
+            .timeout(let message),
+            .malformed(let message),
+            .connectionLost(let message),
+            .unauthenticated(let message):
             return message
         }
     }
@@ -233,14 +233,14 @@ public enum EcrResult {
 
     public var merchantReference: String {
         switch self {
-        case let .approved(approved): return approved.merchantReference
-        case let .declined(declined): return declined.merchantReference
-        case let .failed(reference, _, _): return reference
+        case .approved(let approved): return approved.merchantReference
+        case .declined(let declined): return declined.merchantReference
+        case .failed(let reference, _, _): return reference
         }
     }
 
     public var recovered: EcrInquiry? {
-        guard case let .failed(_, _, recovered) = self else { return nil }
+        guard case .failed(_, _, let recovered) = self else { return nil }
         return recovered
     }
 
@@ -252,7 +252,7 @@ public enum EcrResult {
     public var nextStep: EcrNextStep {
         switch self {
         case .approved: return .none
-        case let .declined(declined): return declined.nextStep
+        case .declined(let declined): return declined.nextStep
         case .failed: return .inquireByMerchantReference
         }
     }
@@ -331,9 +331,9 @@ public enum EcrInquiry {
 
     public var merchantReference: String {
         switch self {
-        case let .found(reference, _, _),
-             let .notFound(reference, _, _),
-             let .failed(reference, _):
+        case .found(let reference, _, _),
+            .notFound(let reference, _, _),
+            .failed(let reference, _):
             return reference
         }
     }
@@ -347,9 +347,9 @@ public enum EcrReceipt {
 
     public var merchantReference: String {
         switch self {
-        case let .ready(reference, _, _),
-             let .unavailable(reference, _, _),
-             let .failed(reference, _):
+        case .ready(let reference, _, _),
+            .unavailable(let reference, _, _),
+            .failed(let reference, _):
             return reference
         }
     }
@@ -363,9 +363,9 @@ public enum EcrReceiptClosed {
 
     public var merchantReference: String {
         switch self {
-        case let .idle(reference, _),
-             let .refused(reference, _, _, _),
-             let .failed(reference, _):
+        case .idle(let reference, _),
+            .refused(let reference, _, _, _),
+            .failed(let reference, _):
             return reference
         }
     }

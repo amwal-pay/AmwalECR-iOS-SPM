@@ -6,7 +6,7 @@ import AmwalECR
 /// commit real Amwal keys. Values are synthetic valid hex so `EcrConfig`
 /// accepts them; override in CI if needed.
 enum EcrTestConfigs {
-    /// Wi‑Fi / LAN / USB cable signing placeholder (valid hex, not a real secret).
+    /// Wi‑Fi / USB cable signing placeholder (valid hex, not a real secret).
     static let SECURE_HASH_KEY_ECR_WIFI =
         "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 

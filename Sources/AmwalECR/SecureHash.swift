@@ -1,5 +1,5 @@
-import Foundation
 import CommonCrypto
+import Foundation
 
 /// Message authentication for the ECR link.
 ///
@@ -16,9 +16,9 @@ enum SecureHash {
     /// Field carrying the signature. Never part of what is signed.
     static let field = "secureHash"
 
-    /// Log label for the Wi‑Fi/LAN signing key (distinct from Web Service).
+    /// Log label for the Wi‑Fi signing key (distinct from Web Service).
     /// The secret itself is supplied by the app on ``EcrConfig.secureHashKey``.
-    static let keyLabel = "Wi-Fi/LAN secure hash key"
+    static let keyLabel = "Wi-Fi/CABLE secure hash key"
 
     private static let nonceBytes = 16
 
