@@ -1,68 +1,20 @@
 # Amwal ECR SDK for iOS
 
-Drive an Amwal POS terminal from your own iOS application over Wi‑Fi, a USB
-cable, or Web Service (Hub HTTPS).
+`AmwalECR` drives an Amwal POS terminal from an iOS or macOS till: sale, void, refund, inquiry, e-receipt, close receipt, and sign-on. Wi-Fi and USB use the terminal's ECR port. Web Service uses HTTPS to the Amwal Hub. Card data stays on the terminal: your app receives a masked PAN at most.
 
-Your application asks for a payment; the terminal reads the card, talks to the
-payment backend, and answers. **No card data passes through your application** —
-you receive a masked PAN at most, so integrating does not pull your app into PCI
-scope the way handling card numbers would.
+Package `AmwalECR` **0.3.0**. Open one session, call the operation, then read the result. It is the iOS counterpart of the [Kotlin SDK](https://github.com/amwal-pay/ECR-simulator/blob/main/ecr-sdk), method for method and outcome for outcome.
 
-```swift
-import AmwalECR
+## Install
 
-var config = EcrConfig()
-config.secureHashKey = settings.secureHashKey(for: .wifi)   // app-owned secret
+- iOS 12.0 or later, macOS 12.0 or later, Swift 5.5 or later. No third-party dependency.
+- Wi-Fi needs the local network permission. Add this to `Info.plist`, or the first Wi-Fi sale fails with `.unreachable` and no explanation. USB cable and Web Service do not need it.
 
-let plan = EcrSessions.plan(
-    link: .lan(host: "192.168.1.50", port: 9100),
-    config: config
-)
-guard plan.isReady else {
-    screen.show(plan.issues.joined(separator: "\n"))
-    return
-}
-
-let session = EcrSessions.open(terminalSerial: "P2M12345678", plan: plan)
-
-switch try session.signOn() {
-case let .available(_, capabilities, _):
-    screen.showTerminal(capabilities.terminalName)
-case let .unavailable(_, reason, _, _):
-    screen.show(reason); return
-case let .failed(_, failure):
-    screen.show(failure.message); return
-}
-
-switch try session.sale(amount: Decimal(string: "1.234")!) {
-case let .approved(sale):
-    receipt.print(rrn: sale.rrn, auth: sale.authCode)
-    _ = try? session.closeReceipt()          // dismiss the terminal receipt
-case let .declined(refusal):
-    screen.show(refusal.reason)
-    if let capabilities = refusal.capabilities {
-        screen.refreshPermitted(capabilities) // profileChanged without re-signing on
-    }
-case let .failed(_, failure, _):
-    screen.show(failure.message)             // outcome may be unknown
-}
+```xml
+<key>NSLocalNetworkUsageDescription</key>
+<string>Connects to the payment terminal to take card payments.</string>
 ```
 
-This is the iOS counterpart of the [Kotlin SDK](https://github.com/amwal-pay/ECR-simulator/blob/main/ecr-sdk), method for
-method and outcome for outcome. Both are used, unchanged, by the Flutter plugin
-[`amwal_ecr`](https://github.com/amwal-pay/amwal-ecr-flutter).
-
----
-
-## Installing
-
-### Swift Package Manager
-
-In Xcode: **File ▸ Add Package Dependencies…**, then
-`https://github.com/amwal-pay/AmwalECR-iOS-SPM.git`, *Up to Next Minor
-Version* from `0.3.0`.
-
-Or in a `Package.swift`:
+In Xcode: **File ▸ Add Package Dependencies…**, then `https://github.com/amwal-pay/AmwalECR-iOS-SPM.git`, *Up to Next Minor Version* from `0.3.0`. Or in a `Package.swift`:
 
 ```swift
 dependencies: [
@@ -73,171 +25,188 @@ targets: [
 ]
 ```
 
-The module is `AmwalECR`, and it brings nothing else with it: Foundation and BSD
-sockets, no third-party dependency.
+Pin the version. A patch release can add API. The same sources are published as the `AmwalECR` pod from [AmwalECR-iOS-CocoaPods](https://github.com/amwal-pay/AmwalECR-iOS-CocoaPods). Depend on one or the other, never both in the same target.
 
-**iOS 12.0+, macOS 12.0+, Swift 5.5+** (this package's floor; the CocoaPods
-pod targets iOS 17.0+).
+## Open a session
 
-> **Using CocoaPods instead?** The same sources are published as the `AmwalECR`
-> pod from [AmwalECR-iOS-CocoaPods](https://github.com/amwal-pay/AmwalECR-iOS-CocoaPods).
-> Depend on one or the other, never both in the same target — two copies of the
-> module will not link.
+<a id="ecropenedsession"></a>
 
-### Local network permission
+Open one session for the terminal and keep it, every sale, void, refund, inquiry, e-receipt, and close receipt can use it. **Every call blocks** while the terminal works, which for a sale is as long as the cardholder takes. Run them off the main thread.
 
-Wi‑Fi only. iOS asks the user before an app may talk to devices on the
-local network. Add this to `Info.plist` or the first Wi-Fi `sale` fails with
-`unreachable` and no explanation. USB cable and Web Service do not need it.
+### Wi-Fi implementation
 
-```xml
-<key>NSLocalNetworkUsageDescription</key>
-<string>Connects to the payment terminal to take card payments.</string>
-```
-
----
-
-## The one rule
-
-**A failure is not a decline.** Of the five `EcrFailure` kinds, four leave the
-outcome *unknown*: the terminal may have taken the money and the answer may
-simply not have arrived.
-
-| Outcome | The money | What a till does |
-|---|---|---|
-| `.approved` | taken | Book it. |
-| `.declined` | not taken | Tell the customer, offer another card. |
-| `.failed(_, .unreachable, _)` | not taken — nothing was sent | Safe to send again. |
-| `.failed(_, .timeout, _)` | **unknown** | Inquire by reference. **Never resend.** |
-| `.failed(_, .connectionLost, _)` | **unknown** | Inquire by reference. **Never resend.** |
-| `.failed(_, .malformed, _)` | **unknown** | Inquire by reference. **Never resend.** |
-| `.failed(_, .unauthenticated, _)` | **unknown** | Inquire by reference. **Never resend.** |
-
-`failure.outcomeUnknown` is that column. A response code of `91` comes back as a
-*decline*, but it is the terminal saying it does not know either — read
-`nextStep` and inquire.
-
-Nothing in this SDK retries a money-moving request, at any level, for any
-failure. That is deliberate, and a caller should not add one: the second request
-is a second sale, and the customer is charged twice.
-
-What the SDK *does* do is ask. A lost answer is followed by one inquiry — an
-inquiry reads and nothing more — and what it found is attached to the result:
+Each terminal shows its IP and port on the idle screen. Use that IP and port to connect from the till and send operations to that terminal. The till and the terminal must be on the same Wi-Fi.
 
 ```swift
-let result = try session.sale(amount: total, merchantReference: order.number)
+import AmwalECR
 
-switch result {
-case let .failed(reference, failure, recovered):
-    if case let .found(_, transaction, _) = recovered {
-        book(transaction)              // the answer was lost; the outcome is not
-    } else if failure.outcomeUnknown {
-        // Still unknown. Ask again later, quoting `reference`. Never resend.
-        _ = try? session.inquireByReference(reference)
-    }
-case .approved, .declined:
-    break
-}
-```
+var config = EcrConfig()
+config.secureHashKey = wifiKey
 
-`result.settled` is the short form of that first branch. Turn the follow-up off
-with `EcrConfig.autoInquireOnFailure` if the till runs its own reconciliation.
-
----
-
-## Implementation
-
-The same walkthrough lives in [`doc/implementation.md`](doc/implementation.md)
-for linking from other docs.
-
-Prefer **`EcrSessions.plan` → `EcrSessions.open`**. Sale, inquiry, sign-on,
-close-receipt and recovery then share one transport (Wi-Fi, USB cable, or Web
-Service) and cannot diverge on which client they build. Construct `EcrTerminal`
-or `EcrWebServiceTerminal` directly only when you already know the link.
-
-### 1. Plan and open a session
-
-**The app owns persistence** (Keychain / settings) and passes **one** value on
-`EcrConfig.secureHashKey` for the selected mode — (Wi‑Fi / USB cable) and
-Web Service use different secrets, but the SDK only consumes the field you
-assign:
-
-```swift
-let secret = settings.secureHashKey(for: selectedMode)
-
-var config = EcrConfig(
-    ecrId: "TILL-01",
-    currencyCode: "512",      // OMR
-    minorUnitDigits: 3,       // baisa
-    port: 9100,
-    connectTimeout: 10,
-    responseTimeout: 120,     // Wi-Fi default; Web Service plan bumps to 130s
-    probeTimeout: 3
+let plan = EcrSessions.plan(
+    link: .lan(host: "192.168.1.50"),   // port defaults to 9100
+    config: config
 )
-config.secureHashKey = secret
 
-let link: EcrLink
-switch selectedMode {
-case .wifi:
-    link = .lan(host: host, port: config.port)
-case .usbCable:
-    link = .usbCable
-case .webService:
-    link = .webService(merchantId: merchantId, terminalId: terminalId)
-    config.environment = .sit   // .uat / .prod
+guard plan.isReady else {
+    show(plan.issues.joined(separator: "; "))
+    return
 }
 
-let plan = EcrSessions.plan(link: link, config: config)
+let session = EcrSessions.open(terminalSerial: "P653200085189", plan: plan)
+```
+
+### Web Service implementation
+
+```swift
+var config = EcrConfig()
+config.secureHashKey = webServiceKey
+config.environment = .uat             // .sit is the default; .prod for live
+
+let plan = EcrSessions.plan(
+    link: .webService(merchantId: "13593", terminalId: "101311"),
+    config: config
+)
+
+let session = EcrSessions.open(terminalSerial: "P653200008251", plan: plan)
+```
+
+Hub addresses stay inside the SDK. `EcrEnvironment.fromName` reads `SIT`, `UAT`, and `PROD`, ignoring case. Any other name reads as `SIT`.
+
+### USB cable implementation
+
+There is no IP address. The terminal profile is USB cable, and the signing key is the Wi-Fi key. This package has no hardware driver: you supply an `EcrChannel` that already owns the byte stream (External Accessory or DriverKit on the device). The bytes are the same framed messages as Wi-Fi.
+
+```swift
+let plan = EcrSessions.plan(link: .usbCable, config: config)
+
 guard plan.isReady else {
-    screen.show(plan.issues.joined(separator: "\n"))
+    show(plan.issues.joined(separator: "; "))
     return
 }
 
 let session = EcrSessions.open(
-    terminalSerial: serial,
+    terminalSerial: "P653200085189",
     plan: plan,
-    usbChannel: plan.usesUsbCable ? { myUsbChannel() } : nil
+    usbChannel: { myUsbChannel() }
 )
 ```
 
-`EcrConfig.secureHashKeyError` says whether a key is usable before you send
-anything. A key that is not is rejected rather than sent unsigned:
-`EcrInvalidArgument` on Wi‑Fi / USB cable, `.malformed` failure on Web Service.
+`open` requires `usbChannel` for a cable plan. A cable session uses the same sale, void, refund, inquiry, e-receipt, and close receipt calls as Wi-Fi.
 
-Web Service Hub hosts are resolved internally from `EcrConfig.environment`
-(SIT / UAT / PROD) and are not published in customer docs.
+## Operations
 
-Web Service inquiry by reference works: `inquireByReference` sends the original's
-reference as `originalMerchantReference` with an empty `stan`. If the Hub cannot
-be reached (no response, empty/invalid body, HTTP 5xx) an inquiry answers
-`.failed(…, .connectionLost, …)` — never `.notFound` — so a till does not charge
-again on a lookup that never completed.
+Amounts are `Decimal` in major units, never `Double`. Build them from text with `EcrDecimal.parse("1.234")`. `merchantReference` names this attempt. Save it before the call. Leave it blank and the SDK generates one and returns it on the result.
 
-A sale / void / refund answer with `nextStep: INQUIRE_BY_MERCHANT_REFERENCE`
-(typically `NO_RESPONSE`) is `.failed(.timeout)` / `.failed(.connectionLost)`,
-not `.declined` — inquire by reference; do not retry the sale.
+### Sale
 
-Web Service default read timeout is **130s**
-(`EcrConfig.webServiceResponseTimeout`). `EcrSessions.plan` applies it when the
-config still has the Wi-Fi default of 120s; an explicit override is kept.
-
-App-to-app `PRINT` (receipt image hand-over) is **Android-only**; this SDK does
-not offer it on iOS.
-
-USB cable has no address — you supply an `EcrChannel` that already owns the byte
-stream (External Accessory / DriverKit on device). Framing, signing and messages
-are identical to Wi‑Fi.
-
-### 2. Sign on (local links)
-
-Ask what the terminal is and what it will accept before offering amounts. Reads
-only — no card, no money. Wi‑Fi and USB cable send `SIGN_ON`. A Web Service
-session answers `.unavailable` and sends nothing (the till already named that
-terminal when it opened the session).
+The cardholder presents the card on the terminal.
 
 ```swift
-guard session.supportsSignOn else { /* Web Service — skip */ ; return }
+let reference = "ORDER-1001-1"
+save(reference)
 
+let result = try session.sale(amount: EcrDecimal.parse("1.234")!, merchantReference: reference)
+```
+
+Read `result` with the `switch` in [Read the result](#read-the-result).
+
+### Void
+
+Cancels an earlier transaction for its full amount. No card. `receiptNumber` is the receipt number (STAN). `originalTerminalId` names another terminal when the original was not taken on this one. Web Service ignores it and uses the terminal in the plan. The void has its own merchant reference.
+
+```swift
+let result = try session.void(
+    receiptNumber: stan,
+    originalTerminalId: "",
+    merchantReference: "ORDER-1001-V1"
+)
+```
+
+### Refund
+
+Returns some or all of an earlier transaction. The cardholder presents the card. `transactionDate` is the original day, `yyyyMMdd`.
+
+```swift
+let result = try session.refund(
+    amount: EcrDecimal.parse("1.000")!,
+    receiptNumber: stan,
+    transactionDate: "20261019",
+    originalTerminalId: "",
+    merchantReference: "ORDER-1001-R1"
+)
+```
+
+### Inquiry by receipt number
+
+Reads a transaction. No card, no money. Safe to repeat, and the terminal answers even while another payment is in progress.
+
+```swift
+let inquiry = try session.inquire(
+    receiptNumber: stan,
+    transactionDate: "20261019"
+)
+```
+
+### Inquiry by merchant reference
+
+Reads the attempt you named. Use this when the sale, void, or refund never answered: you still have the reference you sent, and you do not yet have a receipt number. `transactionDate` is optional. On Wi-Fi and USB, `originalTerminalId` names another terminal.
+
+```swift
+let inquiry = try session.inquireByReference("ORDER-1001-1")
+```
+
+If the Hub cannot be reached, a Web Service inquiry answers `.failed(…, .connectionLost)`, never `.notFound`.
+
+### E-receipt
+
+Wi-Fi and USB. Returns a URL for a QR code. Safe to repeat. `.ready` carries `url`. `.unavailable` means there is no receipt to show. `.failed` means the exchange failed; repeat the call.
+
+```swift
+let receipt = try session.receipt(
+    receiptNumber: stan,
+    transactionDate: "20261019"
+)
+
+if case let .ready(_, url, _) = receipt {
+    showQr(url)
+}
+```
+
+On Web Service the same call returns `.unavailable` without sending anything. `session.supportsReceipt` is false there.
+
+### Close receipt
+
+<a id="close-receipt"></a>
+
+Wi-Fi and USB. Asks the terminal to leave the receipt screen and return to idle. Call it from the till's Close receipt action when the cashier is finished. Sale, void, refund, and dismissing a dialog do not send it. Safe to repeat: `.idle` means the terminal is idle, whether a receipt was up or not.
+
+```swift
+let closed = try session.closeReceipt()
+
+switch closed {
+case .idle:
+    break
+case let .refused(_, _, reason, _):
+    show(reason)            // firmware has no CLOSE_RECEIPT, or Web Service; leave the receipt up
+case let .failed(_, failure):
+    show(failure.message)   // nothing changed; the call can be repeated
+}
+```
+
+On Web Service the call answers `.refused` without sending anything. `session.usesLocalTerminal` says whether the session can send it.
+
+### Settlement
+
+<a id="settlement"></a>
+
+Not in this SDK yet. The terminal settles its batch from a till over Wi-Fi, USB, app to app, and Web Service, and the [Kotlin SDK](https://github.com/amwal-pay/ECR-simulator/blob/main/ecr-sdk/README.md#settlement) sends it over Wi-Fi, USB, and app to app. `AmwalECR` 0.3.0 has no settlement call; settle from the terminal's merchant menu.
+
+### Sign-on
+
+Wi-Fi and USB. Asks the terminal what it will accept before you offer operations to the cashier. `.available` carries `capabilities`: the terminal name, currency, whether e-receipt and physical receipt are on, and the permitted operations with their limits.
+
+```swift
 switch try session.signOn() {
 case let .available(_, capabilities, _):
     guard capabilities.permits(.sale) else { return }
@@ -245,226 +214,136 @@ case let .available(_, capabilities, _):
         amountField.clamp(min: limits.minAmount, max: limits.maxAmount)
     }
 case let .unavailable(_, reason, _, _):
-    screen.show(reason)
+    show(reason)
 case let .failed(_, failure):
-    screen.show(failure.message)
+    show(failure.message)
 }
 ```
 
-| `EcrSignOn` | Meaning |
-|---|---|
-| `.available` | Profile and permits are usable |
-| `.unavailable` | Terminal said no, or Web Service (nothing sent) |
-| `.failed` | Link broke before a readable answer |
+On Web Service the call returns `.unavailable` without sending anything. `session.supportsSignOn` is false there. A later decline can carry `EcrDeclined.capabilities` when the terminal's profile changed, so the till can refresh what is permitted without signing on again.
 
-`supportsSignOn` and `supportsReceipt` are `true` on Wi‑Fi and USB cable
-(`usesLocalTerminal`). Close-receipt uses that same local gate
-(`usesLocalTerminal`); there is no `supportsCloseReceipt` property.
+### Reachability
 
-A later decline can carry `EcrDeclined.capabilities` when the refusal includes
-`profileChanged`, so the till can refresh what is permitted without signing on
-again.
-
-### 3. Take a payment
+Wi-Fi and USB, before a sale. Proves the port or cable answers. It does not prove the terminal is idle.
 
 ```swift
-DispatchQueue.global(qos: .userInitiated).async {
-    let result = try? session.sale(amount: total, merchantReference: order.number)
-    DispatchQueue.main.async {
-        guard let result else { return }
-        screen.show(result)
+if let probe = session.probeReachability(), !probe.reachable {
+    show(probe.error ?? probe.endpoint)
+}
+```
+
+`probeTimeout` is 3 seconds. Web Service returns `nil` from `probeReachability`, so a sale is not held for a Hub probe.
+
+## Read the result
+
+<a id="handle-the-result"></a>
+
+`sale`, `void`, and `refund` return `EcrResult`.
+
+```swift
+switch result {
+case let .approved(approved):
+    record(approved.merchantReference, approved.amount, approved.rrn, approved.authCode)
+    if approved.partialApproval {
+        collectBalance(asked: approved.requestedAmount, taken: approved.amount)
     }
-}
 
-// The operator gave up. This stops the wait on a Wi-Fi TCP socket — it does not
-// stop the terminal, and the outcome is unknown. Web Service and a
-// caller-supplied USB channel are unaffected.
-session.cancel()
-```
+case let .declined(declined):
+    show(declined.reason)
 
-On Wi‑Fi and USB cable, every request is signed — HMAC-SHA256 over the sorted
-top-level fields (field `secureHash`), with a per-message nonce — and every
-answer is checked, both that it carries this till's signature and that it echoes
-*this* request's nonce. An answer failing either check is `.unauthenticated`:
-something else may have replied on the terminal's port, so the answer is
-discarded rather than believed. It is not a decline, and the transaction may
-well have completed. Web Service signs the JSON body instead (HMAC-SHA256 under
-the Web Service secret, field `secureHashValue`) and has no per-request nonce.
+case let .failed(_, _, .found(_, transaction, _)?):
+    apply(transaction)
 
-**Every call blocks** while the terminal works, which for a sale is as long as
-the cardholder takes. Run them off the main thread.
+case let .failed(reference, failure, _) where failure.outcomeUnknown:
+    markUnresolved(reference)
 
-### 4. Close the receipt (local links)
-
-When the result UI is dismissed, ask the terminal to put its paper/e-receipt
-away and return to idle. Moves no money; safe to repeat — an already-idle
-terminal answers `.idle` the same way. Wi‑Fi and USB cable send `CLOSE_RECEIPT`.
-Web Service answers `.refused` and sends nothing (the terminal is not on the
-till's counter). A terminal too old to know the request also answers `.refused`;
-treat that as "cannot be asked" and carry on.
-
-```swift
-func resultDialogDidDismiss() {
-    guard session.usesLocalTerminal else { return }
-    switch try? session.closeReceipt() {
-    case .idle, .none:
-        break
-    case let .refused(_, _, reason, _):
-        screen.log(reason)                   // unsupported or terminal refused
-    case let .failed(_, failure):
-        screen.log(failure.message)          // link broke; safe to ask again
-    }
+case let .failed(_, failure, _):
+    show(failure.message)
 }
 ```
 
-| `EcrReceiptClosed` | Meaning |
-|---|---|
-| `.idle` | Receipt dismissed / terminal already idle |
-| `.refused` | Terminal said no, or Web Service (nothing sent) |
-| `.failed` | Link broke before a readable answer |
+| Result                                    | Meaning                                                                                                                                                                 |
+| ----------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `.approved`                               | Money moved. `amount` is what was taken or returned. `responseCode` is `00` on a plain approval. `maskedPan` is masked.                                                |
+| `.approved` with `partialApproval`        | The issuer authorised less than you asked. `requestedAmount` is what you asked. Collect the difference before you hand over the goods.                                 |
+| `.declined`                               | The terminal answered and refused. `reason` is the text to show. `nextStep` is `.none`, except for `91`, where the terminal does not know either: inquire.             |
+| `.failed` and `.unreachable`              | Nothing was sent. Wi-Fi and USB only.                                                                                                                                   |
+| `.failed` and `failure.outcomeUnknown`    | The request went out and the answer did not settle it: timeout, connection lost, malformed answer, or a signature that does not match. The payment may have completed. |
+| `result.settled`                          | Wi-Fi or USB already inquired. `recovered` is `.found`. Record that transaction.                                                                                        |
+| `EcrInvalidArgument`                      | Wi-Fi and USB: the call was rejected before anything was sent. A merchant reference longer than 32 characters, or one that contains a space, `&`, or `=`, throws here. Web Service answers `.failed(…, .malformed, …)` instead of throwing. |
 
----
+An answer whose `nextStep` is `INQUIRE_BY_MERCHANT_REFERENCE` arrives as `.failed` (`.timeout` or `.connectionLost`), not `.declined`. That includes a Web Service timeout, a lost HTTP call, an empty or unreadable body, and an HTTP 5xx. `failure.outcomeUnknown` is false only for `.unreachable`.
 
-## Operations
+### Inquiry
 
-| | Method | Needs |
-|---|---|---|
-| Reachability | `probeReachability()` → `EcrReachability?` on the session; `isReachable()` / `probeReachability()` → `EcrReachability` on `EcrTerminal` | Wi‑Fi / USB; Web Service session returns `nil` |
-| Sign-on | `signOn(merchantReference:)` → `EcrSignOn` | Wi‑Fi or USB cable (`supportsSignOn`) |
-| Sale | `sale(amount:merchantReference:)` → `EcrResult` | amount |
-| Void | `void(receiptNumber:originalTerminalId:merchantReference:)` → `EcrResult` | the original's receipt number |
-| Refund | `refund(amount:receiptNumber:transactionDate:originalTerminalId:merchantReference:)` → `EcrResult` | amount, receipt number, date |
-| Inquiry | `inquire(receiptNumber:transactionDate:originalTerminalId:merchantReference:)` → `EcrInquiry` | receipt number, date |
-| Inquiry by reference | `inquireByReference(_:transactionDate:originalTerminalId:merchantReference:)` → `EcrInquiry` | the original's reference |
-| Close receipt | `closeReceipt(merchantReference:)` → `EcrReceiptClosed` | Wi‑Fi or USB cable (`usesLocalTerminal`) |
-| E-receipt | `receipt(receiptNumber:transactionDate:originalTerminalId:merchantReference:)` → `EcrReceipt` | receipt number, date (`supportsReceipt`) |
+| Result      | Meaning                                                                                                                                            |
+| ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `.found`    | `transaction` is the record. `status` is the outcome (`Approved`, `Declined`, `Voided`, or other text from the backend). Compare it ignoring case. |
+| `.notFound` | This lookup returned no record. `reason` is the backend's text when it sent any.                                                                   |
+| `.failed`   | The lookup itself failed. Repeat the inquiry. An inquiry does not move money.                                                                      |
 
-On `EcrTerminal` only, sale / void / refund also share `run(_:amount:originalStan:originalTerminalId:originalDate:merchantReference:)`. Inquiry, receipt, sign-on, and close-receipt are dedicated methods — passing them to `run` traps. `EcrOpenedSession` exposes the dedicated methods only.
+On `.found`, `transaction.stan` is the receipt number. `canVoid` and `canRefund` say whether the terminal would accept that operation now. When `partialApproval` is set, `amount` is what was asked and `authorizedAmount` is what was charged.
 
-### What each transport supports
+## Important notes
 
-| | Wi‑Fi | USB cable | Web Service |
-|---|---|---|---|
-| Sale / void / refund / inquiry | ✔ | ✔ | ✔ |
-| Sign-on | ✔ | ✔ | `.unavailable` — nothing sent |
-| Close receipt | ✔ | ✔ | `.refused` — nothing sent |
-| E-receipt URL | ✔ | ✔ | `.unavailable` — nothing sent |
-| `probeReachability` | ✔ | ✔ | `nil` |
-| `cancel` | stops Wi-Fi TCP wait | no-op unless the channel is `TcpEcrChannel` | no-op |
+### Resolve an unknown outcome
 
-USB cable has no built-in hardware driver in this package — you supply an
-`EcrChannel`. Framing, signing, and messages match Wi‑Fi.
+<a id="resolve-an-unknown-outcome"></a>
 
-Both inquiries read and change nothing, so they are safe to repeat, and the
-terminal answers them even while it is taking a payment — which is exactly when a
-till needs them.
+`failure.outcomeUnknown` means the payment may have completed. Inquire by the merchant reference of that attempt. Charge the order again only after `transaction.status` is `Declined`, or after the terminal confirms the attempt did not complete. Nothing in this SDK retries a money-moving request, and neither should you: the second request is a second sale.
 
-`merchantReference` is optional everywhere and is the till's own name for the
-transaction: an order number, a basket id, whatever already names it in the
-caller's system. Left out, the SDK generates one. Either way it comes back on the
-outcome, and it is the only identifier a till holds *before* the terminal
-answers — which is what makes `inquireByReference` the lookup that still works
-when nothing else does.
+1. Save the reference before `sale`, `void`, or `refund`.
+2. On Wi-Fi and USB, read `result.recovered` first. With `autoInquireOnFailure` left on (the default), the SDK has already called `inquireByReference` once. `.found` settles the attempt. `.notFound`, `.failed`, or nil leaves it unknown.
+3. Call `inquireByReference` with the saved reference.
+4. Read `transaction.status`, ignoring case.
+   - `Approved` — the attempt completed. On a void or refund, the void or refund completed.
+   - `Declined` — it did not. A new attempt needs a new reference.
+   - Any other value, including `Voided` and `Reversed` — leave the order unresolved.
+5. `.notFound` after a lost answer means this lookup returned no record. The same answer follows a terminal reset, or a record that has aged out. Confirm on the terminal, or with Amwal, before you take payment again.
+6. `.failed` means the lookup failed. Inquire again.
+7. On startup, inquire every attempt still marked unresolved.
 
-On Wi‑Fi and USB cable, arguments that cannot be used — a reference over 32
-characters or carrying a space, `&` or `=`; a secret that is not hex — throw
-`EcrInvalidArgument` and nothing is sent. Over Web Service those same mistakes
-come back as `.failed(…, .malformed, …)` (or inquiry `.failed`) without
-throwing. Everything that happens on the wire after a request is sent is an
-`EcrResult` (or `EcrSignOn` / `EcrReceiptClosed` / `EcrReceipt` / `EcrInquiry`),
-never an exception for a terminal refusal.
+`.unreachable` means the connection was never made. There is no attempt to look up.
 
----
+### Merchant reference
 
-## Configuration
+32 characters maximum, with space, `&`, and `=` excluded. Use one reference per attempt; an order number plus an attempt suffix fits. A void and a refund each get a new reference.
 
-```swift
-var config = EcrConfig(
-    ecrId: "TILL-01",         // how this till names itself
-    currencyCode: "512",      // OMR
-    minorUnitDigits: 3,       // baisa
-    port: 9100,
-    connectTimeout: 10,       // seconds
-    responseTimeout: 120,     // Wi-Fi default; Web Service plan bumps to 130s
-    probeTimeout: 3,          // probe / isReachable only
-    environment: .sit         // Web Service only
-)
-config.secureHashKey = secret
-```
+### Receipt number
 
-`responseTimeout` defaults to 120 seconds on Wi-Fi (and **130 seconds** on Web
-Service) because a sale waits for a human being to
-present a card and key a PIN. Shortening it does not make the terminal faster;
-it makes a completed sale time out and land in the unknown-outcome path.
+`.approved` does not carry it. Read `transaction.stan` from an inquiry by merchant reference, or read the printed receipt. Pass that receipt's day as `yyyyMMdd` to refund, inquiry by receipt number, and e-receipt. A receipt number is unique on one terminal for one day.
 
----
+### Amounts and currency
 
-## Amounts
+`currencyCode` defaults to `"512"` and `minorUnitDigits` to `3` (OMR). Another currency needs both. The SDK converts to the wire's minor units once, rounding half up, matching the Kotlin SDK to the last minor unit. Amounts come back as strings in major units (`"1.234"`).
 
-Amounts are `Decimal`, never `Double`. A binary float cannot hold `1.234`, and an
-amount that is off by a thousandth is a wrong charge.
+### Timeouts
+
+| Transport                  | Wait                                                                                                                                         |
+| -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| Wi-Fi                      | `connectTimeout` 10 s, then `responseTimeout` 120 s. A lost answer can add one more response wait for the automatic inquiry.               |
+| USB                        | `responseTimeout` 120 s, the same as Wi-Fi.                                                                                                  |
+| Web Service through `plan` | A `responseTimeout` of 120 s becomes `EcrConfig.webServiceResponseTimeout` (130 s). Any other value is kept.                                 |
+
+The default wait covers card present and PIN. Shortening it does not make the terminal faster; it makes a completed sale time out. `session.cancel()` stops the wait on a Wi-Fi socket only; it does not stop the terminal, and the outcome is unknown.
+
+### Keys
+
+Even-length hex, at least 16 characters. `EcrConfig.secureHashKeyError` says whether a key is usable before you send anything. A key that is not is rejected rather than sent unsigned: `EcrInvalidArgument` on Wi-Fi and USB, a `.malformed` failure on Web Service.
+
+Wi-Fi and USB sign the field `secureHash`, with a per-message nonce that the answer must echo. Web Service signs `secureHashValue`. The two secrets are issued separately. `plan.signingKeyLabel` names the one this plan expects.
+
+### Logging
 
 ```swift
-guard let amount = EcrDecimal.parse(field.text ?? "") else { return }   // no locale surprises
-_ = try session.sale(amount: amount)
+let logger = EcrLogger { print($0) }
+let session = EcrSessions.open(terminalSerial: serial, plan: plan, logger: logger)
 ```
 
-The conversion to the wire's minor units happens once, inside the SDK, half-up —
-matching the Kotlin SDK to the last minor unit, so an Android till and an iOS
-till cannot disagree about a rounding boundary.
+Logging is off until you pass a logger. `EcrLogger.none` discards every line. Treat the lines as transaction records: a signed message's `secureHash` appears in them, though never the key.
 
-Amounts come back as strings in major units (`"1.234"`), exactly as reported.
+## When you build the message yourself
 
----
+`EcrTransactionType` is `.sale`, `.void`, `.refund`, `.inquiry`, `.receipt`, `.signOn`, `.closeReceipt`. `EcrTransactionType.menuOptions` is the operator menu: sale, void, refund, inquiry. `requiresAmount`, `requiresOriginalStan`, `requiresOriginalDate`, `movesMoney`, and `allowsOtherTerminal` say which fields that operation needs. `EcrTerminal.run` accepts only the three that move money; passing any other type traps.
 
-## Documentation
-
-The protocol and the operational detail are shared with the Android SDK and are
-not duplicated here:
-
-| | |
-|---|---|
-| **[Implementation](doc/implementation.md)** | Plan, open, sign-on, sale, close receipt on this package |
-| **[Wire protocol](https://github.com/amwal-pay/ECR-simulator/blob/main/ecr-sdk/docs/protocol.md)** | The bytes on the socket |
-| **[Integration guide](https://github.com/amwal-pay/ECR-simulator/blob/main/ecr-sdk/docs/integration-guide.md)** | From an empty project to a till that reconciles properly |
-| **[Troubleshooting](https://github.com/amwal-pay/ECR-simulator/blob/main/ecr-sdk/docs/troubleshooting.md)** | Symptom → cause → fix |
-| **[Compatibility matrix](https://github.com/amwal-pay/amwal-ecr-flutter/blob/main/doc/compatibility-matrix.md)** | Versions, floors, and every place the platforms differ |
-| **[Release policy](https://github.com/amwal-pay/amwal-ecr-flutter/blob/main/doc/release-policy.md)** | Versioning, release order, rollback |
-
----
-
-## Building and testing
-
-```bash
-swift test            # no simulator needed
-```
-
-Unit tests share signing placeholders via `EcrTestConfigs` (aligned with
-`ecr_sdk`): `SECURE_HASH_KEY_ECR_WIFI`, `SECURE_HASH_KEY_ECR_WIFI_OTHER`, and
-`SECURE_HASH_KEY_WEBSERVICE`, exposed as `lan` / `lanOther` / `webService`
-configs. Never commit real Amwal keys.
-
-The suite is not incidental to the platform story: `EcrDecimalTests`,
-`EcrMessageTests` and `EcrResponseReaderTests` assert this SDK against the Kotlin
-SDK's own test payloads and rounding boundaries. That is what keeps "identical on
-both platforms" a checkable claim.
-
-### Continuous integration
-
-[`codemagic.yaml`](codemagic.yaml) runs on Codemagic:
-
-| Workflow | When | What it does |
-|---|---|---|
-| `spm-verify` | every push and pull request | `swift test` and builds for iOS device + simulator |
-| `spm-release` | a `vX.Y.Z` tag | same checks, verifies the tag matches the top `CHANGELOG.md` entry, then resolves that exact version from GitHub into a throwaway consumer package |
-
-The tag *is* the SwiftPM release — nothing is uploaded and no credentials are
-needed. Start a release by pushing the tag — `git push origin vX.Y.Z` — so
-Codemagic receives a tag webhook (`CM_TAG` is set). A manual rebuild of a tagged
-commit also works: the script falls back to `git describe` when `CM_TAG` is
-empty. Do not start `spm-release` on a branch; that fails.
-
-Tag SwiftPM first, then the matching `vX.Y.Z` on
-[AmwalECR-iOS-CocoaPods](https://github.com/amwal-pay/AmwalECR-iOS-CocoaPods);
-see the release policy in
-[amwal-ecr-flutter](https://github.com/amwal-pay/amwal-ecr-flutter/blob/main/doc/release-policy.md).
+The wire format is in [the protocol](https://github.com/amwal-pay/ECR-simulator/blob/main/ecr-sdk/docs/protocol.md). Building, testing, and continuous integration are in [Development](doc/development.md).
