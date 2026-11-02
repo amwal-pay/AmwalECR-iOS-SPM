@@ -5,6 +5,48 @@ the addition described in
 [the release policy](https://github.com/amwal-pay/amwal-ecr-flutter/blob/main/doc/release-policy.md): any change to
 what an outcome *means* is breaking, however small the diff.
 
+## 0.3.1
+
+Settlement, and Web Service close receipt. Tag `v0.3.1` to publish.
+
+### Added
+
+- **`EcrTerminal.settlement`** and **`EcrOpenedSession.settlement`**. Wi‑Fi and
+  USB send `SETTLEMENT`. Web Service posts `/Ecr/settle` (identity, currency,
+  and both timestamps — no `messageType`). Confirm with the cashier first: the
+  terminal starts as soon as the request arrives. Safe to repeat when the
+  answer is lost: a closed batch answers `.nothingToSettle` the next time.
+- **`EcrSettlement`** (`.settled` / `.nothingToSettle` / `.notSettled` /
+  `.failed`) and **`EcrSettlementTotal`**. Amounts in `.settled` are major
+  units. `totals` always has `SALE`, `REFUND`, `VOID`, `PRE_AUTH`, and
+  `CAPTURE`, with a zero row where the terminal omitted one. `.notSettled`
+  carries `uploadedTransactions` when the terminal sent it.
+- **`EcrOpenedSession.supportsSettlement`** — true when the session has a
+  local link or a Web Service client.
+- **`EcrTransactionType.settlement`** (`SETTLEMENT`) — not in `menuOptions`;
+  run via `settlement`, not `run`.
+- **Web Service `/Ecr/closeReceipt`.**
+  `EcrOpenedSession.closeReceipt(originalMerchantReference:)` and
+  `EcrWebServiceTerminal.closeReceipt(originalMerchantReference:merchantReference:)`.
+  The body has no `messageType` and no `currencyCode`.
+  `originalMerchantReference` is the sale, void, or refund. If only
+  `merchantReference` is passed on the session, that string is the original
+  and this close request gets a new id. A blank original answers
+  `.failed(.malformed)` and sends nothing. Sale, void, refund, and dismissing
+  a dialog do not send it. Wi‑Fi and USB still send `CLOSE_RECEIPT`.
+
+### Changed (breaking)
+
+- **Web Service close receipt no longer answers `.refused` without sending.**
+  A session that used to refuse the call now posts `/Ecr/closeReceipt`. A call
+  with no original merchant reference answers `.failed(.malformed)` and sends
+  nothing. Wi‑Fi and USB `closeReceipt()` are unchanged.
+
+### Changed
+
+- README documents settlement and Web Service close receipt. App to app is
+  not driven on iOS.
+
 ## 0.3.0
 
 Port of Android `ecr-sdk` 1.0.8 Web Service changes. Tag `v0.3.0` to publish.

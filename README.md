@@ -2,7 +2,7 @@
 
 `AmwalECR` drives an Amwal POS terminal from an iOS or macOS till: sale, void, refund, inquiry, e-receipt, close receipt, settlement, and sign-on. Wi-Fi and USB use the terminal's ECR port. Web Service uses HTTPS to the Amwal Hub. Card data stays on the terminal: your app receives a masked PAN at most.
 
-Package `AmwalECR` **0.3.0**. Open one session, call the operation, then read the result. It is the iOS counterpart of the [Kotlin SDK](https://github.com/amwal-pay/ECR-simulator/blob/main/ecr-sdk), method for method and outcome for outcome.
+Package `AmwalECR` **0.3.1**. Open one session, call the operation, then read the result. It is the iOS counterpart of the [Kotlin SDK](https://github.com/amwal-pay/ECR-simulator/blob/main/ecr-sdk), method for method and outcome for outcome.
 
 ## Install
 
@@ -14,11 +14,11 @@ Package `AmwalECR` **0.3.0**. Open one session, call the operation, then read th
 <string>Connects to the payment terminal to take card payments.</string>
 ```
 
-In Xcode: **File ▸ Add Package Dependencies…**, then `https://github.com/amwal-pay/AmwalECR-iOS-SPM.git`, *Up to Next Minor Version* from `0.3.0`. Or in a `Package.swift`:
+In Xcode: **File ▸ Add Package Dependencies…**, then `https://github.com/amwal-pay/AmwalECR-iOS-SPM.git`, *Up to Next Minor Version* from `0.3.1`. Or in a `Package.swift`:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/amwal-pay/AmwalECR-iOS-SPM.git", .upToNextMinor(from: "0.3.0")),
+    .package(url: "https://github.com/amwal-pay/AmwalECR-iOS-SPM.git", .upToNextMinor(from: "0.3.1")),
 ],
 targets: [
     .target(name: "Till", dependencies: [.product(name: "AmwalECR", package: "AmwalECR-iOS-SPM")]),
