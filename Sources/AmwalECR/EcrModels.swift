@@ -95,6 +95,10 @@ public enum EcrTransactionType: String {
     case signOn = "SIGN_ON"
     case closeReceipt = "CLOSE_RECEIPT"
 
+    /// Closes the current batch. Wi‑Fi and USB send `SETTLEMENT`. Web Service
+    /// posts `/Ecr/settle`. Not a menu choice — the till confirms first.
+    case settlement = "SETTLEMENT"
+
     /// The value carried in the message's `messageType` field.
     public var messageType: String { rawValue }
 
@@ -107,11 +111,12 @@ public enum EcrTransactionType: String {
         case .receipt: return "Receipt"
         case .signOn: return "Sign-on"
         case .closeReceipt: return "Close receipt"
+        case .settlement: return "Settlement"
         }
     }
 
     /// The operations an operator picks from, in the order a till usually
-    /// offers them. `receipt` is absent by design.
+    /// offers them. Receipt, close receipt, and settlement are absent by design.
     public static let menuOptions: [EcrTransactionType] = [.sale, .void, .refund, .inquiry]
 
     public var requiresAmount: Bool { self == .sale || self == .refund }
@@ -369,6 +374,46 @@ public enum EcrReceiptClosed {
             return reference
         }
     }
+}
+
+/// One row of a settlement total: how many, and their amount in major units.
+public struct EcrSettlementTotal: Equatable {
+    public let count: Int
+    public let amount: String
+
+    public init(count: Int, amount: String) {
+        self.count = count
+        self.amount = amount
+    }
+}
+
+/// What a settlement came back as. The till already confirmed with the cashier.
+public enum EcrSettlement {
+    /// The batch closed. Amounts are major units. Every total type is present.
+    case settled(
+        merchantReference: String,
+        batchId: String,
+        currency: String,
+        startTime: String,
+        endTime: String,
+        totalTransactions: Int,
+        netAmount: String,
+        totals: [String: EcrSettlementTotal],
+        raw: String
+    )
+    /// The terminal is idle and the batch had nothing in it.
+    case nothingToSettle(merchantReference: String, message: String, raw: String)
+    /// The batch is still open, or the terminal refused before it started.
+    case notSettled(
+        merchantReference: String,
+        responseCode: String,
+        status: String,
+        reason: String,
+        uploadedTransactions: Int?,
+        raw: String
+    )
+    /// The exchange failed. The batch may or may not have closed.
+    case failed(merchantReference: String, failure: EcrFailure)
 }
 
 /// The arguments cannot be used, and nothing was sent.

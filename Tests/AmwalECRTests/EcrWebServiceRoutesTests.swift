@@ -21,12 +21,21 @@ final class EcrWebServiceRoutesTests: XCTestCase {
             routes.fullUrl(.transactionStatus)
         )
         XCTAssertEqual("https://test.amwalpg.com:25453/Ecr/Sale", routes.fullUrl(.sale))
+        XCTAssertEqual("https://test.amwalpg.com:25453/Ecr/settle", routes.fullUrl(.settle))
+        XCTAssertEqual(
+            "https://test.amwalpg.com:25453/Ecr/closeReceipt",
+            routes.fullUrl(.closeReceipt)
+        )
     }
 
     func testOperationPathsAreFixedAcrossEnvironments() {
         XCTAssertEqual("/Ecr/Inquiry", EcrWebServiceEndpoints.transactionStatus)
         XCTAssertEqual("/Ecr/Refund", EcrWebServiceOperation.refund.path)
         XCTAssertEqual("/Ecr/Void", EcrWebServiceOperation.void.path)
+        XCTAssertEqual("/Ecr/settle", EcrWebServiceEndpoints.settle)
+        XCTAssertEqual("/Ecr/settle", EcrWebServiceOperation.settle.path)
+        XCTAssertEqual("/Ecr/closeReceipt", EcrWebServiceEndpoints.closeReceipt)
+        XCTAssertEqual("/Ecr/closeReceipt", EcrWebServiceOperation.closeReceipt.path)
     }
 }
 

@@ -6,4 +6,6 @@ enum EcrWebServiceEndpoints {
     static let void = "/Ecr/Void"
     static let refund = "/Ecr/Refund"
     static let transactionStatus = "/Ecr/Inquiry"
+    static let settle = "/Ecr/settle"
+    static let closeReceipt = "/Ecr/closeReceipt"
 }

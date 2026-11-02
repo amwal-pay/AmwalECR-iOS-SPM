@@ -249,6 +249,70 @@ extension EcrTerminal {
         )
     }
 
+    /// Reads a settlement. `settlementStatus` decides the branch, not the
+    /// envelope alone: an empty batch is a success with nothing in it, and a
+    /// refusal before the settlement started carries no status at all.
+    /// Amounts come back in major units. Missing total rows are zero.
+    static func settlement(
+        from json: [String: Any],
+        merchantReference: String,
+        minorUnitDigits: Int
+    ) -> EcrSettlement {
+        let envelope = EcrResponseEnvelope.parse(json)
+        let data = envelope.data
+        let reference = envelope.merchantReference.isEmpty
+            ? merchantReference
+            : envelope.merchantReference
+        let status = ecrString(data, "settlementStatus")
+        let raw = EcrMessageCodec.text(json)
+
+        if envelope.success && status == "NO_TRANSACTIONS" {
+            return .nothingToSettle(
+                merchantReference: reference,
+                message: envelope.displayMessage.isEmpty
+                    ? "There are no transactions to settle"
+                    : envelope.displayMessage,
+                raw: raw
+            )
+        }
+
+        if !envelope.success || data == nil || status != "SETTLED" {
+            return .notSettled(
+                merchantReference: reference,
+                responseCode: envelope.responseCode,
+                status: status,
+                reason: envelope.displayMessage.isEmpty
+                    ? "The batch was not settled"
+                    : envelope.displayMessage,
+                uploadedTransactions: wholeNumber(data, "uploadedTransactions"),
+                raw: raw
+            )
+        }
+
+        let rows = data?["totals"] as? [String: Any]
+        var totals: [String: EcrSettlementTotal] = [:]
+        for type in ["SALE", "REFUND", "VOID", "PRE_AUTH", "CAPTURE"] {
+            let row = rows?[type] as? [String: Any]
+            let amount = ecrString(row, "amount")
+            totals[type] = EcrSettlementTotal(
+                count: wholeNumber(row, "count") ?? 0,
+                amount: majorUnits(amount.isEmpty ? "0" : amount, digits: minorUnitDigits)
+            )
+        }
+
+        return .settled(
+            merchantReference: reference,
+            batchId: ecrString(data, "batchId"),
+            currency: ecrString(data, "currency"),
+            startTime: ecrString(data, "startTime"),
+            endTime: ecrString(data, "endTime"),
+            totalTransactions: wholeNumber(data, "totalTransactions") ?? 0,
+            netAmount: majorUnits(ecrString(data, "netAmount"), digits: minorUnitDigits),
+            totals: totals,
+            raw: raw
+        )
+    }
+
     static func receiptClosed(from json: [String: Any], merchantReference: String) -> EcrReceiptClosed {
         let envelope = EcrResponseEnvelope.parse(json)
         let resolvedReference = envelope.merchantReference.isEmpty
@@ -322,6 +386,12 @@ extension EcrTerminal {
             if !amount.isEmpty { return amount }
         }
         return majorUnits(ecrString(root, "amount"), digits: minorUnitDigits)
+    }
+
+    private static func wholeNumber(_ json: [String: Any]?, _ key: String) -> Int? {
+        let text = ecrString(json, key)
+        if text.isEmpty { return nil }
+        return Int(text)
     }
 
     static func majorUnits(_ minorUnits: String, digits: Int) -> String {

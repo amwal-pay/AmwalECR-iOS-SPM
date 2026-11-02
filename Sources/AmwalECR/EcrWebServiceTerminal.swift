@@ -187,6 +187,115 @@ public final class EcrWebServiceTerminal {
         }
     }
 
+    /// Posts `/Ecr/closeReceipt` for the sale, void, or refund named by
+    /// [originalMerchantReference]. Call when the cashier taps Close receipt.
+    /// Not sent by sale, void, or refund.
+    public func closeReceipt(
+        originalMerchantReference: String,
+        merchantReference: String = ""
+    ) -> EcrReceiptClosed {
+        if originalMerchantReference.trimmed.isEmpty {
+            return .failed(
+                merchantReference: merchantReference,
+                failure: .malformed("Close receipt needs the original merchant reference")
+            )
+        }
+        guard let ids = backendIds() else {
+            return .failed(
+                merchantReference: merchantReference,
+                failure: .malformed("merchantId and terminalId are required for Web Service ECR")
+            )
+        }
+        do {
+            let (merchantId, terminalId) = ids
+            let (reference, body) = try EcrWebServiceMessage.buildCloseReceipt(
+                merchantId: merchantId,
+                terminalId: terminalId,
+                terminalSerial: terminalSerial,
+                secureHashKey: config.secureHashKey,
+                ecrId: config.ecrId,
+                merchantReference: merchantReference,
+                originalMerchantReference: originalMerchantReference
+            )
+            WebServiceHttpLog.operation(
+                logger: logger,
+                messageType: EcrTransactionType.closeReceipt.messageType,
+                merchantReference: reference,
+                terminalSerial: terminalSerial,
+                merchantId: merchantId,
+                terminalId: terminalId
+            )
+            let response = api.postJson(operation: .closeReceipt, body: body)
+            return EcrTerminal.receiptClosed(from: response, merchantReference: reference)
+        } catch let error as EcrInvalidArgument {
+            return .failed(merchantReference: merchantReference, failure: .malformed(error.message))
+        } catch {
+            return .failed(
+                merchantReference: merchantReference,
+                failure: .malformed(error.localizedDescription)
+            )
+        }
+    }
+
+    /// Posts `/Ecr/settle`. Confirm with the cashier before calling: the Hub
+    /// starts the close as soon as the request arrives. The answer is read the
+    /// same way as a Wi‑Fi `SETTLEMENT`.
+    public func settlement(merchantReference: String = "") -> EcrSettlement {
+        guard let ids = backendIds() else {
+            return .failed(
+                merchantReference: merchantReference,
+                failure: .malformed("merchantId and terminalId are required for Web Service ECR")
+            )
+        }
+        do {
+            let (merchantId, terminalId) = ids
+            let (reference, body) = try EcrWebServiceMessage.buildPlain(
+                merchantId: merchantId,
+                terminalId: terminalId,
+                terminalSerial: terminalSerial,
+                secureHashKey: config.secureHashKey,
+                currencyCode: config.currencyCode,
+                ecrId: config.ecrId,
+                merchantReference: merchantReference
+            )
+            WebServiceHttpLog.operation(
+                logger: logger,
+                messageType: EcrWebServiceOperation.settle.label,
+                merchantReference: reference,
+                terminalSerial: terminalSerial,
+                merchantId: merchantId,
+                terminalId: terminalId
+            )
+            let response = api.postJson(operation: .settle, body: body)
+            if lost(response) {
+                let reason = ecrString(response, "message")
+                return .failed(
+                    merchantReference: reference,
+                    failure: .connectionLost(
+                        reason.isEmpty ? "The Web Service did not answer" : reason
+                    )
+                )
+            }
+            return EcrTerminal.settlement(
+                from: response,
+                merchantReference: reference,
+                minorUnitDigits: config.minorUnitDigits
+            )
+        } catch let error as EcrInvalidArgument {
+            return .failed(merchantReference: merchantReference, failure: .malformed(error.message))
+        } catch {
+            return .failed(
+                merchantReference: merchantReference,
+                failure: .malformed(error.localizedDescription)
+            )
+        }
+    }
+
+    private func lost(_ response: [String: Any]) -> Bool {
+        ecrString(response, "nextStep") == HttpEcrWebServiceApi.unknownOutcomeStep
+            && !(response["data"] is [String: Any])
+    }
+
     private func readInquiry(_ response: [String: Any], reference: String) -> EcrInquiry {
         // A transport failure is synthesised as an answer with no data, which
         // would read as "not found" — and a till told nothing was taken may

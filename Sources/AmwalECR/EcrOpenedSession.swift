@@ -22,6 +22,9 @@ public final class EcrOpenedSession {
     /// Receipt URLs exist only on the local (Wi-Fi / USB) protocol.
     public var supportsReceipt: Bool { local != nil }
 
+    /// Wi‑Fi and USB send `SETTLEMENT`. Web Service posts `/Ecr/settle`.
+    public var supportsSettlement: Bool { local != nil || web != nil }
+
     /// Whether this session can ask the terminal to describe itself.
     public var supportsSignOn: Bool { local != nil }
 
@@ -176,18 +179,51 @@ public final class EcrOpenedSession {
 
     /// Asks the terminal to put its receipt away and return to idle.
     ///
-    /// Local links only. A Web Service session answers refused and sends
-    /// nothing: the terminal is not on the till's counter.
-    public func closeReceipt(merchantReference: String = "") throws -> EcrReceiptClosed {
-        guard let local else {
-            return .refused(
-                merchantReference: merchantReference,
-                responseCode: "",
-                reason: "Closing the receipt is only supported over Wi‑Fi and USB cable ECR",
-                raw: ""
+    /// Wi‑Fi and USB send `CLOSE_RECEIPT`. Web Service posts `/Ecr/closeReceipt`
+    /// and needs [originalMerchantReference], the sale, void, or refund that
+    /// just finished. If only [merchantReference] is passed on Web Service, that
+    /// string is the original and this close request gets a new id.
+    /// Call from the till's Close receipt action, not when the dialog closes.
+    public func closeReceipt(
+        merchantReference: String = "",
+        originalMerchantReference: String = ""
+    ) throws -> EcrReceiptClosed {
+        if let local {
+            return try local.closeReceipt(merchantReference: merchantReference)
+        }
+        if let web {
+            let original = originalMerchantReference.trimmed.isEmpty
+                ? merchantReference
+                : originalMerchantReference
+            if original.trimmed.isEmpty {
+                return .failed(
+                    merchantReference: merchantReference,
+                    failure: .malformed(
+                        "Web Service close receipt needs the original merchant reference"
+                    )
+                )
+            }
+            let requestReference = originalMerchantReference.trimmed.isEmpty
+                ? ""
+                : merchantReference
+            return web.closeReceipt(
+                originalMerchantReference: original,
+                merchantReference: requestReference
             )
         }
-        return try local.closeReceipt(merchantReference: merchantReference)
+        throw EcrInvalidArgument("Session has no transport")
+    }
+
+    /// Closes the current batch. Wi‑Fi and USB send `SETTLEMENT`. Web Service
+    /// posts `/Ecr/settle`. Confirm with the cashier before calling.
+    public func settlement(merchantReference: String = "") throws -> EcrSettlement {
+        if let local {
+            return try local.settlement(merchantReference: merchantReference)
+        }
+        if let web {
+            return web.settlement(merchantReference: merchantReference)
+        }
+        throw EcrInvalidArgument("Session has no transport")
     }
 
     public func cancel() {

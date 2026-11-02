@@ -6,6 +6,8 @@ enum EcrWebServiceOperation {
     case void
     case refund
     case transactionStatus
+    case settle
+    case closeReceipt
 
     var path: String {
         switch self {
@@ -13,6 +15,8 @@ enum EcrWebServiceOperation {
         case .void: return EcrWebServiceEndpoints.void
         case .refund: return EcrWebServiceEndpoints.refund
         case .transactionStatus: return EcrWebServiceEndpoints.transactionStatus
+        case .settle: return EcrWebServiceEndpoints.settle
+        case .closeReceipt: return EcrWebServiceEndpoints.closeReceipt
         }
     }
 
@@ -22,6 +26,8 @@ enum EcrWebServiceOperation {
         case .void: return "Void"
         case .refund: return "Refund"
         case .transactionStatus: return "Transaction status"
+        case .settle: return "Settlement"
+        case .closeReceipt: return "Close receipt"
         }
     }
 
@@ -31,7 +37,9 @@ enum EcrWebServiceOperation {
         case .void: return .void
         case .refund: return .refund
         case .inquiry: return .transactionStatus
-        case .receipt, .signOn, .closeReceipt: return nil
+        case .receipt, .signOn: return nil
+        case .closeReceipt: return .closeReceipt
+        case .settlement: return .settle
         }
     }
 }

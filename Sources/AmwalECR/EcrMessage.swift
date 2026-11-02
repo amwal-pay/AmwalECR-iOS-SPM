@@ -118,6 +118,11 @@ extension String {
     var trimmed: String { trimmingCharacters(in: .whitespacesAndNewlines) }
 }
 
+func ecrString(_ json: [String: Any]?, _ key: String) -> String {
+    guard let json else { return "" }
+    return ecrString(json, key)
+}
+
 func ecrString(_ json: [String: Any], _ key: String) -> String {
     guard let value = json[key], !(value is NSNull) else { return "" }
     if let text = value as? String { return text }

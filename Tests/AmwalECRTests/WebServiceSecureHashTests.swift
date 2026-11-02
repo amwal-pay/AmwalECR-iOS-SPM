@@ -123,4 +123,19 @@ final class WebServiceMessageTests: XCTestCase {
         ).1
         XCTAssertFalse((signed[WebServiceSecureHash.field] as? String ?? "").isEmpty)
     }
+
+    func testCloseReceiptIsIdentityPlusTheOriginalReference() throws {
+        let json = try build(
+            .closeReceipt,
+            originalReference: "BB13726B7E261874",
+            reference: "AC4C243243C6A7C5"
+        )
+        XCTAssertNil(json["messageType"])
+        XCTAssertNil(json["currencyCode"])
+        XCTAssertEqual("AC4C243243C6A7C5", str(json, "merchantReference"))
+        XCTAssertEqual("BB13726B7E261874", str(json, "originalMerchantReference"))
+        XCTAssertEqual("20260101120000", str(json, "transactionDateTime"))
+        XCTAssertEqual("20260101120000", str(json, "requestDateTime"))
+        XCTAssertEqual(13593, (json["merchantId"] as? NSNumber)?.int64Value)
+    }
 }

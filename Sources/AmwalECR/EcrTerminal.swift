@@ -233,6 +233,23 @@ public final class EcrTerminal {
         }
     }
 
+    /// Closes the current batch. The terminal starts as soon as this arrives:
+    /// the till confirms with the cashier before calling. Safe to repeat when
+    /// the answer is lost.
+    public func settlement(merchantReference: String = "") throws -> EcrSettlement {
+        let message = try build(.settlement, merchantReference: merchantReference)
+        switch exchange(message) {
+        case .failure(let failure):
+            return .failed(merchantReference: message.merchantReference, failure: failure)
+        case .success(let json):
+            return EcrTerminal.settlement(
+                from: json,
+                merchantReference: message.merchantReference,
+                minorUnitDigits: config.minorUnitDigits
+            )
+        }
+    }
+
     public func receipt(
         receiptNumber: String,
         transactionDate: String,
