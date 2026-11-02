@@ -1,6 +1,6 @@
 # Amwal ECR SDK for iOS
 
-`AmwalECR` drives an Amwal POS terminal from an iOS or macOS till: sale, void, refund, inquiry, e-receipt, close receipt, and sign-on. Wi-Fi and USB use the terminal's ECR port. Web Service uses HTTPS to the Amwal Hub. Card data stays on the terminal: your app receives a masked PAN at most.
+`AmwalECR` drives an Amwal POS terminal from an iOS or macOS till: sale, void, refund, inquiry, e-receipt, close receipt, settlement, and sign-on. Wi-Fi and USB use the terminal's ECR port. Web Service uses HTTPS to the Amwal Hub. Card data stays on the terminal: your app receives a masked PAN at most.
 
 Package `AmwalECR` **0.3.0**. Open one session, call the operation, then read the result. It is the iOS counterpart of the [Kotlin SDK](https://github.com/amwal-pay/ECR-simulator/blob/main/ecr-sdk), method for method and outcome for outcome.
 
@@ -179,7 +179,7 @@ On Web Service the same call returns `.unavailable` without sending anything. `s
 
 <a id="close-receipt"></a>
 
-Wi-Fi and USB. Asks the terminal to leave the receipt screen and return to idle. Call it from the till's Close receipt action when the cashier is finished. Sale, void, refund, and dismissing a dialog do not send it. Safe to repeat: `.idle` means the terminal is idle, whether a receipt was up or not.
+Wi-Fi and USB send `CLOSE_RECEIPT`. Web Service posts `/Ecr/closeReceipt` and needs the sale, void, or refund reference as `originalMerchantReference`. Call it from the till's Close receipt action when the cashier is finished. Sale, void, refund, and dismissing a dialog do not send it. Safe to repeat: `.idle` means the terminal is idle, whether a receipt was up or not.
 
 ```swift
 let closed = try session.closeReceipt()
@@ -188,19 +188,41 @@ switch closed {
 case .idle:
     break
 case let .refused(_, _, reason, _):
-    show(reason)            // firmware has no CLOSE_RECEIPT, or Web Service; leave the receipt up
+    show(reason)            // firmware has no CLOSE_RECEIPT; leave the receipt up
 case let .failed(_, failure):
     show(failure.message)   // nothing changed; the call can be repeated
 }
 ```
 
-On Web Service the call answers `.refused` without sending anything. `session.usesLocalTerminal` says whether the session can send it.
+```swift
+// Web Service: the second argument is the sale / void / refund reference.
+let closed = try session.closeReceipt(originalMerchantReference: saleReference)
+```
+
+A Web Service close with no original reference answers `.failed` and sends nothing. App to app is not driven on iOS.
 
 ### Settlement
 
 <a id="settlement"></a>
 
-Not in this SDK yet. The terminal settles its batch from a till over Wi-Fi, USB, app to app, and Web Service, and the [Kotlin SDK](https://github.com/amwal-pay/ECR-simulator/blob/main/ecr-sdk/README.md#settlement) sends it over Wi-Fi, USB, and app to app. `AmwalECR` 0.3.0 has no settlement call; settle from the terminal's merchant menu.
+Closes the current batch, the same Manual settlement as the terminal's merchant menu. Wi-Fi and USB send `SETTLEMENT` on the same session as a sale. Confirm with the cashier first: the terminal does not ask, and the close starts as soon as the request arrives. The terminal must be idle. Safe to repeat when the answer is lost: a batch that closed answers `.nothingToSettle` the next time, and one that did not settles on the retry.
+
+Web Service posts `/Ecr/settle` (identity, currency, and both timestamps — no `messageType`). `supportsSettlement` is true when the session has a local link or a Web Service client, and `settlement()` reads the answer the same way as Wi-Fi `SETTLEMENT`.
+
+```swift
+switch try session.settlement() {
+case let .settled(_, batchId, _, _, _, _, netAmount, totals, _):
+    show(batchId, netAmount, totals)
+case let .nothingToSettle(_, message, _):
+    show(message)
+case let .notSettled(_, _, _, reason, _, _):
+    show(reason)
+case let .failed(_, failure):
+    show(failure.message)   // the batch may or may not have closed
+}
+```
+
+Amounts in `.settled` are major units. `totals` always has `SALE`, `REFUND`, `VOID`, `PRE_AUTH`, and `CAPTURE`, each an `EcrSettlementTotal`, with a zero row where the terminal omitted one. `closeReceipt` puts the terminal's settlement summary away sooner; it is the same call as after a sale.
 
 ### Sign-on
 
