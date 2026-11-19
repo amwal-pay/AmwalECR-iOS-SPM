@@ -1,4 +1,5 @@
 import XCTest
+
 @testable import AmwalECR
 
 final class EcrWebServiceRoutesTests: XCTestCase {
@@ -10,7 +11,7 @@ final class EcrWebServiceRoutesTests: XCTestCase {
 
         XCTAssertEqual("https://test.amwalpg.com:25452", sit)
         XCTAssertEqual("https://test.amwalpg.com:25453", uat)
-        XCTAssertEqual("https://pos.amwalpg.com", prod)
+        XCTAssertEqual("https://ecrgateway.amwalpg.com", prod)
         XCTAssertEqual(3, Set([sit, uat, prod]).count)
     }
 
@@ -61,9 +62,11 @@ final class WebServiceTransportOutcomeTests: XCTestCase {
         let body = HttpEcrWebServiceApi.errorBody(responseCode: "503", message: "Unavailable")
         let inquiry = EcrWebServiceTerminal.inquiryTransportFailure(body, reference: "R1")
 
-        guard case let .failed(reference, failure) = inquiry,
-              case let .connectionLost(message) = failure
-        else { return XCTFail("expected failed(connectionLost), got \(String(describing: inquiry))") }
+        guard case .failed(let reference, let failure) = inquiry,
+            case .connectionLost(let message) = failure
+        else {
+            return XCTFail("expected failed(connectionLost), got \(String(describing: inquiry))")
+        }
         XCTAssertEqual("R1", reference)
         XCTAssertEqual("Unavailable", message)
     }

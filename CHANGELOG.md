@@ -5,6 +5,17 @@ the addition described in
 [the release policy](https://github.com/amwal-pay/amwal-ecr-flutter/blob/main/doc/release-policy.md): any change to
 what an outcome *means* is breaking, however small the diff.
 
+## 0.3.2
+
+Web Service production Hub. Tag `v0.3.2` to publish. No API changes.
+
+### Changed
+
+- Web Service: `EcrEnvironment.prod` now resolves to the current production Hub.
+  SIT and UAT are unchanged, and the request paths are unchanged. Affected: a
+  firewall or allowlist that still permits the previous production host. Action:
+  allow the current production host.
+
 ## 0.3.1
 
 Settlement, and Web Service close receipt. Tag `v0.3.1` to publish.

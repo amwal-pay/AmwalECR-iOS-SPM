@@ -8,7 +8,7 @@ import Foundation
 enum EcrEnvironmentUrls {
     private static let sitHost = "https://test.amwalpg.com:25452"
     private static let uatHost = "https://test.amwalpg.com:25453"
-    private static let prodHost = "https://pos.amwalpg.com"
+    private static let prodHost = "https://ecrgateway.amwalpg.com"
 
     static func hubSocketUrl(environment: EcrEnvironment) -> String {
         let host: String
