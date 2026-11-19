@@ -7,7 +7,7 @@ what an outcome *means* is breaking, however small the diff.
 
 ## 0.3.2
 
-Web Service production Hub. Tag `v0.3.2` to publish. No API changes.
+Web Service production Hub. No API changes.
 
 ### Changed
 
